@@ -48,7 +48,7 @@ interface ExpenseViewProps {
 }
 
 export function ExpenseView({ expenses, accounts = [], settings = null, debts = [], initialTypeFilter = 'الكل' }: ExpenseViewProps) {
-  const { addTransaction, updateExpenseTransactional, deleteTransaction } = useFinanceData();
+  const { addTransaction, updateExpenseTransactional, deleteTransaction, clearExpensesTransactional } = useFinanceData();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Expense | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -198,28 +198,18 @@ export function ExpenseView({ expenses, accounts = [], settings = null, debts = 
     if (!auth.currentUser) return;
     setClearing(true);
     try {
-      // Delete all expenses of type "مصروف" (or unspecified) belonging to this user
-      const expensesToDelete = expenses.filter(e => e.type === 'مصروف' || !e.type);
-      for (const item of expensesToDelete) {
-        if (item.id) {
-          await deleteDoc(doc(db, 'expenses', item.id));
-        }
-      }
+      await clearExpensesTransactional();
       setShowClearConfirm(false);
     } catch (err) {
       console.error(err);
-      alert('حدث خطأ أثناء تفريغ السجل.');
+      alert('حدث خطأ أثناء تفريغ السجل وإعادة الأرصدة.');
     } finally {
       setClearing(false);
     }
   };
 
-  // Filtered list
+  // Filtered list - Shows all real transactions without artificial exclusions
   const filteredList = expenses.filter(item => {
-    // Exclude dummy 300, 400, 700 expenses completely from the main UI
-    const isDummy = item.amount === 700 || item.amount === 400 || item.amount === 300;
-    if (isDummy) return false;
-
     const itemType = item.type || 'مصروف';
     const matchesType = typeFilter === 'الكل' || itemType === typeFilter;
     const matchesSearch = 

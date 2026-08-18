@@ -21,6 +21,13 @@ export function QuickAddModal({ isOpen, onClose, initialType = 'income' }: Quick
   const { 
     addTransaction, 
     distributeSalaryTransactional,
+    quickAddExpenseTransactional,
+    quickAddIncomeLivingTransactional,
+    quickAddIncomeEmergencyTransactional,
+    quickAddIncomeSavingsTransactional,
+    quickAddIncomeDebtTransactional,
+    quickAddIncomeSalarySplitTransactional,
+    quickAddIncomeUnallocatedTransactional,
     accounts,
     expenses,
     transactions = [],
@@ -208,202 +215,43 @@ export function QuickAddModal({ isOpen, onClose, initialType = 'income' }: Quick
     const todayStr = new Date().toISOString().split('T')[0];
 
     try {
-      // Helper function to safely update or create account
-      const getOrCreateAccount = async (accName: string, defaultType: string, deltaAmount: number, notesStr: string) => {
-        let acc = accounts.find(a => a.name === accName || a.name.includes(accName));
-        if (acc && acc.id) {
-          await updateDoc(doc(db, 'accounts', acc.id), { 
-            balance: increment(deltaAmount),
-            notes: notesStr || acc.notes || ''
-          });
-          return acc.id;
-        } else {
-          const newRef = await addDoc(collection(db, 'accounts'), {
-            userId: auth.currentUser!.uid,
-            name: accName,
-            type: defaultType,
-            balance: deltaAmount,
-            currency: 'ريال سعودي',
-            isArchived: false,
-            notes: notesStr
-          });
-          return newRef.id;
-        }
-      };
-
       if (activeType === 'income') {
         if (incomeType === 'extra') {
           // --- 3-OPTION EXTRA INCOME MECHANISM ---
           if (extraAllocationChoice === 'specific') {
             // Option 1: Direct to a specific fund
             if (specificFund === 'living') {
-              // 1. Living (adds to current month's living budget)
-              await addDoc(collection(db, 'expenses'), {
-                userId: auth.currentUser.uid,
-                type: 'دخل',
-                date: todayStr,
-                category: 'دخل إضافي',
-                description: name || 'دخل إضافي (مخصص للمعيشة)',
-                amount: parsedAmount,
-                paymentMethod: 'الحساب البنكي الرئيسي',
-                extraIncomeAllocation: 'living',
-                allocatedAmounts: { living: parsedAmount },
-                notes: 'موجه لميزانية المعيشة للشهر الحالي فقط'
-              });
-              await getOrCreateAccount('الحساب البنكي الرئيسي', 'الحساب البنكي', parsedAmount, 'حساب الراتب والمصاريف المعيشية');
+              await quickAddIncomeLivingTransactional(parsedAmount, name || 'دخل إضافي (مخصص للمعيشة)', todayStr);
               setSuccessMsg(`🎉 تم توجيه الدخل الإضافي (${formatCurrency(parsedAmount)}) لميزانية المعيشة لهذا الشهر بنجاح!`);
-
             } else if (specificFund === 'debt') {
-              // 2. Debt Payment Fund
-              await addDoc(collection(db, 'expenses'), {
-                userId: auth.currentUser.uid,
-                type: 'دخل',
-                date: todayStr,
-                category: 'دخل إضافي',
-                description: name || 'دخل إضافي (لسداد الديون)',
-                amount: parsedAmount,
-                paymentMethod: 'صندوق سداد الديون',
-                extraIncomeAllocation: 'debt',
-                allocatedAmounts: { debt: parsedAmount },
-                notes: 'موجه لصندوق سداد الديون'
-              });
-              await getOrCreateAccount('صندوق سداد الديون', 'صندوق مخصص', parsedAmount, 'مخصص سداد الديون');
-
-              // If specific debt selected or debts exist, record progress
               const targetDebt = debts.find(d => d.id === (selectedDebtId || debts[0]?.id)) || debts[0];
-              if (targetDebt && targetDebt.id) {
-                const currentUnpaid = targetDebt.totalAmount - targetDebt.paidAmount;
-                const newPaid = Math.min(targetDebt.totalAmount, targetDebt.paidAmount + parsedAmount);
-                const newStatus = newPaid >= targetDebt.totalAmount ? 'تم' : 'قيد الانتظار';
-                await updateDoc(doc(db, 'debts', targetDebt.id), {
-                  paidAmount: increment(parsedAmount),
-                  status: newStatus
-                });
-                const remainingAfter = targetDebt.totalAmount - newPaid;
-                setSuccessMsg(`🎉 تم توجيه الدخل الإضافي (${formatCurrency(parsedAmount)}) لسداد الدين! انخفضت المديونية إلى ${formatCurrency(remainingAfter)} ريال!`);
+              await quickAddIncomeDebtTransactional(parsedAmount, name || 'دخل إضافي (لسداد الديون)', targetDebt?.id, todayStr);
+              if (targetDebt) {
+                setSuccessMsg(`🎉 تم توجيه الدخل الإضافي (${formatCurrency(parsedAmount)}) لسداد دين [${targetDebt.name}] بنجاح!`);
               } else {
                 setSuccessMsg(`🎉 تم توجيه ${formatCurrency(parsedAmount)} لصندوق سداد الديون بنجاح!`);
               }
-
             } else if (specificFund === 'emergency') {
-              // 3. Emergency Fund
-              await addDoc(collection(db, 'expenses'), {
-                userId: auth.currentUser.uid,
-                type: 'دخل',
-                date: todayStr,
-                category: 'دخل إضافي',
-                description: name || 'دخل إضافي (طوارئ)',
-                amount: parsedAmount,
-                paymentMethod: 'صندوق الطوارئ',
-                extraIncomeAllocation: 'emergency',
-                allocatedAmounts: { emergency: parsedAmount },
-                notes: 'موجه لصندوق الطوارئ'
-              });
-              await getOrCreateAccount('صندوق الطوارئ', 'صندوق مخصص', parsedAmount, 'مخصص الطوارئ');
+              await quickAddIncomeEmergencyTransactional(parsedAmount, name || 'دخل إضافي (طوارئ)', todayStr);
               setSuccessMsg(`🎉 تم إيداع وتوجيه ${formatCurrency(parsedAmount)} مباشرة في صندوق الطوارئ!`);
-
             } else if (specificFund === 'savings') {
-              // 4. Savings & Investment Fund
-              await addDoc(collection(db, 'expenses'), {
-                userId: auth.currentUser.uid,
-                type: 'دخل',
-                date: todayStr,
-                category: 'دخل إضافي',
-                description: name || 'دخل إضافي (ادخار واستثمار)',
-                amount: parsedAmount,
-                paymentMethod: 'صندوق الادخار والاستثمار',
-                extraIncomeAllocation: 'savings',
-                allocatedAmounts: { savings: parsedAmount },
-                notes: 'موجه لصندوق الادخار والاستثمار'
-              });
-              await getOrCreateAccount('صندوق الادخار والاستثمار', 'صندوق مخصص', parsedAmount, 'مخصص الادخار والاستثمار');
+              await quickAddIncomeSavingsTransactional(parsedAmount, name || 'دخل إضافي (ادخار واستثمار)', todayStr);
               setSuccessMsg(`🎉 تم إيداع وتوجيه ${formatCurrency(parsedAmount)} في صندوق الادخار والاستثمار!`);
             }
-
           } else if (extraAllocationChoice === 'salary_split') {
-            // Option 2: Proportional distribution using salary ratios (26% Debt, 16% Emergency, 12% Savings, 46% Living)
+            await quickAddIncomeSalarySplitTransactional(parsedAmount, name || 'دخل إضافي موزع بنسب الراتب', todayStr);
             const debtAmt = Math.round(parsedAmount * 0.26);
             const emgAmt = Math.round(parsedAmount * 0.16);
             const savAmt = Math.round(parsedAmount * 0.12);
-            const livingAmt = parsedAmount - debtAmt - emgAmt - savAmt; // 46% adjusted for exact sum
-
-            await addDoc(collection(db, 'expenses'), {
-              userId: auth.currentUser.uid,
-              type: 'دخل',
-              date: todayStr,
-              category: 'دخل إضافي',
-              description: name || 'دخل إضافي موزع بنسب الراتب',
-              amount: parsedAmount,
-              paymentMethod: 'الحساب البنكي الرئيسي',
-              extraIncomeAllocation: 'salary_split',
-              allocatedAmounts: {
-                living: livingAmt,
-                debt: debtAmt,
-                emergency: emgAmt,
-                savings: savAmt
-              },
-              notes: `موزع بنسب الراتب: ${formatCurrency(livingAmt)} معيشة (46%)، ${formatCurrency(debtAmt)} ديون (26%)، ${formatCurrency(emgAmt)} طوارئ (16%)، ${formatCurrency(savAmt)} ادخار (12%)`
-            });
-
-            // Update accounts without double-counting (sum of increments = parsedAmount)
-            await getOrCreateAccount('الحساب البنكي الرئيسي', 'الحساب البنكي', livingAmt, 'حساب الراتب والمصاريف المعيشية');
-            await getOrCreateAccount('صندوق سداد الديون', 'صندوق مخصص', debtAmt, 'مخصص سداد الديون');
-            await getOrCreateAccount('صندوق الطوارئ', 'صندوق مخصص', emgAmt, 'مخصص الطوارئ');
-            await getOrCreateAccount('صندوق الادخار والاستثمار', 'صندوق مخصص', savAmt, 'مخصص الادخار والاستثمار');
-
-            // Log internal transfers for audit trail
-            const splitTransfers = [
-              { to: 'صندوق سداد الديون', amt: debtAmt, pct: '26%' },
-              { to: 'صندوق الطوارئ', amt: emgAmt, pct: '16%' },
-              { to: 'صندوق الادخار والاستثمار', amt: savAmt, pct: '12%' }
-            ].filter(t => t.amt > 0);
-
-            for (const t of splitTransfers) {
-              await addDoc(collection(db, 'transactions'), {
-                userId: auth.currentUser!.uid,
-                fromAccount: 'الحساب البنكي الرئيسي',
-                toAccount: t.to,
-                amount: t.amt,
-                date: todayStr,
-                notes: `توزيع دخل إضافي بنسبة ${t.pct}`
-              });
-            }
-
+            const livingAmt = parsedAmount - debtAmt - emgAmt - savAmt;
             setSuccessMsg(`🎉 تم توزيع الدخل الإضافي بنجاح: ${formatCurrency(livingAmt)} للمعيشة، ${formatCurrency(debtAmt)} للديون، ${formatCurrency(emgAmt)} للطوارئ، ${formatCurrency(savAmt)} للادخار!`);
-
           } else if (extraAllocationChoice === 'unallocated') {
-            // Option 3: Unallocated extra income (kept in main bank balance only)
-            await addDoc(collection(db, 'expenses'), {
-              userId: auth.currentUser.uid,
-              type: 'دخل',
-              date: todayStr,
-              category: 'دخل إضافي',
-              description: name || 'دخل إضافي غير مخصص',
-              amount: parsedAmount,
-              paymentMethod: 'الحساب البنكي الرئيسي',
-              extraIncomeAllocation: 'unallocated',
-              allocatedAmounts: { unallocated: parsedAmount },
-              notes: 'دخل إضافي غير مخصص (في الرصيد البنكي الرئيسي وصافي الثروة)'
-            });
-            await getOrCreateAccount('الحساب البنكي الرئيسي', 'الحساب البنكي', parsedAmount, 'حساب الراتب والمصاريف المعيشية');
+            await quickAddIncomeUnallocatedTransactional(parsedAmount, name || 'دخل إضافي غير مخصص', todayStr);
             setSuccessMsg(`✅ تم حفظ الدخل الإضافي (${formatCurrency(parsedAmount)}) كـ "غير مخصص" في الحساب البنكي وصافي الثروة.`);
           }
         }
       } else if (activeType === 'expense') {
-        // Log normal expense
-        await addDoc(collection(db, 'expenses'), {
-          userId: auth.currentUser.uid,
-          type: 'مصروف',
-          amount: parsedAmount,
-          description: name || 'مصروف عام',
-          category: 'الطعام',
-          paymentMethod: accountName,
-          date: todayStr
-        });
-        const acc = accounts.find(a => a.name === accountName);
-        if (acc && acc.id) {
-          await updateDoc(doc(db, 'accounts', acc.id), { balance: increment(-parsedAmount) });
-        }
+        await quickAddExpenseTransactional(parsedAmount, name || 'مصروف عام', accountName, 'الطعام', todayStr);
         setSuccessMsg(`تم خصم المصروف بقيمة ${formatCurrency(parsedAmount)} من ${accountName}!`);
       }
 
@@ -416,7 +264,7 @@ export function QuickAddModal({ isOpen, onClose, initialType = 'income' }: Quick
 
     } catch (err) {
       console.error(err);
-      alert('حدث خطأ أثناء معالجة العملية.');
+      alert('حدث خطأ أثناء معالجة العملية: ' + (err instanceof Error ? err.message : 'يرجى المحاولة مرة أخرى'));
     } finally {
       setIsSubmitting(false);
     }
