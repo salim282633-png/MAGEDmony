@@ -1,3 +1,4 @@
+import { PRIMARY_BANK_NAME } from '../lib/constants';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0

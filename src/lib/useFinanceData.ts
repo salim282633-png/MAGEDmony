@@ -137,7 +137,7 @@ export function useFinanceData() {
 
         // Seed initial default accounts once with "بنك الشامل" as the single primary bank
         const defaultAccounts: Omit<AccountItem, 'id'>[] = [
-          { userId, name: PRIMARY_BANK_NAME, type: 'الحساب البنكي', balance: 1150, currency: 'ريال سعودي', isArchived: false, isPrimaryBank: true, role: 'primary_bank', notes: 'الحساب البنكي الرئيسي والوحيد لتحويل الراتب ومخصص المعيشة' },
+          { userId, name: PRIMARY_BANK_NAME, type: 'الحساب البنكي', balance: 1150, currency: 'ريال سعودي', isArchived: false, isPrimaryBank: true, role: 'primary_bank', notes: 'بنك الشامل والوحيد لتحويل الراتب ومخصص المعيشة' },
           { userId, name: 'صندوق سداد الديون', type: 'صندوق مخصص', balance: 650, currency: 'ريال سعودي', isArchived: false, role: 'dedicated_fund', notes: 'مخصص سداد الديون (26%)' },
           { userId, name: 'صندوق الطوارئ', type: 'صندوق مخصص', balance: 400, currency: 'ريال سعودي', isArchived: false, role: 'dedicated_fund', notes: 'مخصص الطوارئ (16%)' },
           { userId, name: 'صندوق الادخار والاستثمار', type: 'صندوق مخصص', balance: 300, currency: 'ريال سعودي', isArchived: false, role: 'dedicated_fund', notes: 'مخصص الادخار والاستثمار (12%)' },
@@ -254,7 +254,7 @@ export function useFinanceData() {
     if (
       !method || 
       method === 'الحساب البنكي' || 
-      method === 'الحساب البنكي الرئيسي' || 
+      method === 'بنك الشامل' || 
       method === PRIMARY_BANK_NAME ||
       method.includes('بنك') ||
       method.includes('البنك')
@@ -563,7 +563,7 @@ export function useFinanceData() {
       const refundsByAccount: Record<string, number> = {};
       for (const d of expensesToDelete) {
         const exp = d.data() as Expense;
-        const method = exp.paymentMethod || 'الحساب البنكي الرئيسي';
+        const method = exp.paymentMethod || 'بنك الشامل';
         refundsByAccount[method] = (refundsByAccount[method] || 0) + (exp.amount || 0);
       }
 
@@ -656,7 +656,7 @@ export function useFinanceData() {
   ) => {
     if (!user || amount <= 0) return;
     const today = date || new Date().toISOString().split('T')[0];
-    const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
+    const mainAcc = getPrimaryBankAccount(accounts);
     const mainRef = mainAcc?.id ? doc(db, 'accounts', mainAcc.id) : doc(collection(db, 'accounts'));
     const newExpRef = doc(collection(db, 'expenses'));
     const refId = generateReferenceId('inc_liv');
@@ -675,7 +675,7 @@ export function useFinanceData() {
         category: 'دخل إضافي',
         description: description || 'دخل إضافي (مخصص للمعيشة)',
         amount,
-        paymentMethod: 'الحساب البنكي الرئيسي',
+        paymentMethod: 'بنك الشامل',
         extraIncomeAllocation: 'living',
         allocatedAmounts: { living: amount },
         notes: 'موجه لميزانية المعيشة للشهر الحالي فقط',
@@ -687,7 +687,7 @@ export function useFinanceData() {
       } else {
         tx.set(mainRef, {
           userId: user.uid,
-          name: 'الحساب البنكي الرئيسي',
+          name: 'بنك الشامل',
           type: 'الحساب البنكي',
           balance: amount,
           currency: 'ريال سعودي',
@@ -915,7 +915,7 @@ export function useFinanceData() {
     const savAmt = Math.round(amount * 0.12);
     const livingAmt = amount - debtAmt - emgAmt - savAmt;
 
-    const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
+    const mainAcc = getPrimaryBankAccount(accounts);
     const debtAcc = accounts.find(a => a.name.includes('الديون'));
     const emgAcc = accounts.find(a => a.name.includes('طوارئ') || a.name.includes('الطوارئ'));
     const savAcc = accounts.find(a => a.name.includes('الادخار') || a.name.includes('استثمار'));
@@ -956,7 +956,7 @@ export function useFinanceData() {
         category: 'دخل إضافي',
         description: description || 'دخل إضافي موزع بنسب الراتب',
         amount,
-        paymentMethod: 'الحساب البنكي الرئيسي',
+        paymentMethod: 'بنك الشامل',
         extraIncomeAllocation: 'salary_split',
         allocatedAmounts: {
           living: livingAmt,
@@ -972,7 +972,7 @@ export function useFinanceData() {
       if (mainAcc?.id) {
         tx.update(mainRef, { balance: mainBal + livingAmt });
       } else {
-        tx.set(mainRef, { userId: user.uid, name: 'الحساب البنكي الرئيسي', type: 'الحساب البنكي', balance: livingAmt, currency: 'ريال سعودي', isArchived: false, notes: 'حساب الراتب والمصاريف المعيشية' });
+        tx.set(mainRef, { userId: user.uid, name: 'بنك الشامل', type: 'الحساب البنكي', balance: livingAmt, currency: 'ريال سعودي', isArchived: false, notes: 'حساب الراتب والمصاريف المعيشية' });
       }
 
       if (debtAcc?.id) {
@@ -1004,7 +1004,7 @@ export function useFinanceData() {
         const trRef = doc(collection(db, 'transactions'));
         tx.set(trRef, {
           userId: user.uid,
-          fromAccount: 'الحساب البنكي الرئيسي',
+          fromAccount: 'بنك الشامل',
           toAccount: t.to,
           amount: t.amt,
           date: today,
@@ -1025,7 +1025,7 @@ export function useFinanceData() {
   ) => {
     if (!user || amount <= 0) return;
     const today = date || new Date().toISOString().split('T')[0];
-    const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
+    const mainAcc = getPrimaryBankAccount(accounts);
     const mainRef = mainAcc?.id ? doc(db, 'accounts', mainAcc.id) : doc(collection(db, 'accounts'));
     const newExpRef = doc(collection(db, 'expenses'));
     const refId = generateReferenceId('inc_unalloc');
@@ -1044,7 +1044,7 @@ export function useFinanceData() {
         category: 'دخل إضافي',
         description: description || 'دخل إضافي غير مخصص',
         amount,
-        paymentMethod: 'الحساب البنكي الرئيسي',
+        paymentMethod: 'بنك الشامل',
         extraIncomeAllocation: 'unallocated',
         allocatedAmounts: { unallocated: amount },
         notes: 'دخل إضافي غير مخصص (في الرصيد البنكي الرئيسي وصافي الثروة)',
@@ -1056,7 +1056,7 @@ export function useFinanceData() {
       } else {
         tx.set(mainRef, {
           userId: user.uid,
-          name: 'الحساب البنكي الرئيسي',
+          name: 'بنك الشامل',
           type: 'الحساب البنكي',
           balance: amount,
           currency: 'ريال سعودي',
@@ -1174,7 +1174,7 @@ export function useFinanceData() {
     const distDocRef = doc(db, 'salary_distributions', distDocId);
 
     // Target accounts
-    const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
+    const mainAcc = getPrimaryBankAccount(accounts);
     const debtAcc = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
     const emgAcc = accounts.find(a => a.name === 'صندوق الطوارئ' || a.name.includes('الطوارئ'));
     const savAcc = accounts.find(a => a.name === 'صندوق الادخار والاستثمار' || a.name.includes('الادخار'));
@@ -1234,7 +1234,7 @@ export function useFinanceData() {
         category: 'الراتب',
         description: `إيداع وتوزيع راتب ${monthArabic} تلقائياً`,
         amount: salaryAmount,
-        paymentMethod: 'الحساب البنكي الرئيسي',
+        paymentMethod: 'بنك الشامل',
         referenceId: salaryRefId
       });
 
@@ -1244,7 +1244,7 @@ export function useFinanceData() {
       } else {
         tx.set(mainRef, {
           userId: user.uid,
-          name: 'الحساب البنكي الرئيسي',
+          name: 'بنك الشامل',
           type: 'الحساب البنكي',
           balance: allocations.operationalAmount,
           currency: 'ريال سعودي',
@@ -1309,7 +1309,7 @@ export function useFinanceData() {
         const newTrRef = doc(collection(db, 'transactions'));
         tx.set(newTrRef, {
           userId: user.uid,
-          fromAccount: 'الحساب البنكي الرئيسي',
+          fromAccount: 'بنك الشامل',
           toAccount: item.to,
           amount: item.amt,
           date: today,
@@ -1349,7 +1349,7 @@ export function useFinanceData() {
     const targetExpenses = expSnap.docs;
     const targetTrans = transSnap.docs;
 
-    const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
+    const mainAcc = getPrimaryBankAccount(accounts);
     const debtAcc = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
     const emgAcc = accounts.find(a => a.name === 'صندوق الطوارئ' || a.name.includes('الطوارئ'));
     const savAcc = accounts.find(a => a.name === 'صندوق الادخار والاستثمار' || a.name.includes('الادخار'));
@@ -1469,7 +1469,7 @@ export function useFinanceData() {
       if (isBankAccount(acc)) {
         const existingPrimary = getPrimaryBankAccount(accounts);
         if (existingPrimary) {
-          throw new Error(`يمنع إنشاء حساب بنكي إضافي. «${PRIMARY_BANK_NAME}» هو الحساب البنكي الرئيسي والوحيد في النظام.`);
+          throw new Error(`يمنع إنشاء حساب بنكي إضافي. «${PRIMARY_BANK_NAME}» هو بنك الشامل والوحيد في النظام.`);
         }
       }
       await addDoc(collection(db, 'accounts'), { ...acc, userId: user.uid });

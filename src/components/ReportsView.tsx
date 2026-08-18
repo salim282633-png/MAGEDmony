@@ -78,7 +78,7 @@ export function ReportsView({
     const plannedCategories = [
       {
         id: 'main',
-        name: 'الحساب البنكي الرئيسي / المعيشة (46%)',
+        name: 'بنك الشامل / المعيشة (46%)',
         plannedAmount: Math.round(currentSalary * 0.46), // 1150
         matcher: (a: AccountItem) => a.name.includes('الرئيسي') || a.name.includes('المصاريف') || a.type === 'الحساب البنكي' || a.type === 'جاري',
         note: 'الميزانية المتبقية لمصاريف المعيشة التشغيلية'

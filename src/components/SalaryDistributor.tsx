@@ -350,7 +350,7 @@ export function SalaryDistributor({ settings, accounts, expenses, transactions =
                 </td>
                 <td className="py-3 px-3"><span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black border border-emerald-200">{operationalPct}% (المتبقي المضاف)</span></td>
                 <td className="py-3 px-3 text-emerald-900 font-black">{formatCurrency(operationalAmount)}</td>
-                <td className="py-3 px-3 text-emerald-700/80 text-xs font-bold">المبلغ المضاف إلى الحساب البنكي الرئيسي للمصاريف المعيشية والفواتير</td>
+                <td className="py-3 px-3 text-emerald-700/80 text-xs font-bold">المبلغ المضاف إلى بنك الشامل للمصاريف المعيشية والفواتير</td>
               </tr>
             </tbody>
           </table>

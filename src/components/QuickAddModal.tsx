@@ -1,3 +1,4 @@
+import { getPrimaryBankAccount } from '../types';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -67,7 +68,7 @@ export function QuickAddModal({ isOpen, onClose, initialType = 'expense' }: Quic
   const [amount, setAmount] = useState<string>('');
   const [name, setName] = useState<string>('');
   const [category, setCategory] = useState<string>('الطعام');
-  const [accountName, setAccountName] = useState<string>('الحساب البنكي الرئيسي');
+  const [accountName, setAccountName] = useState<string>('بنك الشامل');
   
   // Extra income routing
   const [extraAllocationChoice, setExtraAllocationChoice] = useState<'specific' | 'salary_split' | 'unallocated'>('specific');
@@ -119,12 +120,12 @@ export function QuickAddModal({ isOpen, onClose, initialType = 'expense' }: Quic
     if (activeType === 'income' && incomeType === 'salary') {
       setAmount(salaryAmount.toString());
       setName(`إيداع وتوزيع راتب ${currentMonthArabic}`);
-      setAccountName('الحساب البنكي الرئيسي');
+      setAccountName('بنك الشامل');
     } else {
       setAmount('');
       setName('');
       if (accounts.length > 0) {
-        const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي') || accounts[0];
+        const mainAcc = getPrimaryBankAccount(accounts);
         setAccountName(mainAcc.name);
       }
     }

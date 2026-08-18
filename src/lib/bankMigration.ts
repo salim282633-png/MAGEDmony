@@ -61,7 +61,7 @@ export function isBankAccount(acc: {
     type === 'الحساب البنكي' ||
     type === 'جاري' ||
     name === PRIMARY_BANK_NAME ||
-    name === 'الحساب البنكي الرئيسي' ||
+    name === 'بنك الشامل' ||
     name === 'الحساب البنكي' ||
     name.includes('بنك') ||
     name.includes('البنك') ||
@@ -122,7 +122,7 @@ export function migrateBankAccountsPure(
     isArchived: false,
     isPrimaryBank: true,
     role: 'primary_bank',
-    notes: primaryBankSource?.notes || 'الحساب البنكي الرئيسي والوحيد في النظام'
+    notes: primaryBankSource?.notes || 'بنك الشامل والوحيد في النظام'
   };
 
   const deletedAccountIds = bankAccounts
@@ -142,7 +142,7 @@ export function migrateBankAccountsPure(
     const isOldBank = 
       oldBankNames.has(exp.paymentMethod) || 
       exp.paymentMethod === 'الحساب البنكي' || 
-      exp.paymentMethod === 'الحساب البنكي الرئيسي' ||
+      exp.paymentMethod === 'بنك الشامل' ||
       (exp.accountId && oldBankIds.has(exp.accountId));
 
     if (isOldBank) {
@@ -161,11 +161,11 @@ export function migrateBankAccountsPure(
     let toAcc = t.toAccount;
     let toId = t.toAccountId;
 
-    if (oldBankNames.has(fromAcc) || fromAcc === 'الحساب البنكي' || fromAcc === 'الحساب البنكي الرئيسي' || (fromId && oldBankIds.has(fromId))) {
+    if (oldBankNames.has(fromAcc) || fromAcc === 'الحساب البنكي' || fromAcc === 'بنك الشامل' || (fromId && oldBankIds.has(fromId))) {
       fromAcc = PRIMARY_BANK_NAME;
       fromId = primaryBankId;
     }
-    if (oldBankNames.has(toAcc) || toAcc === 'الحساب البنكي' || toAcc === 'الحساب البنكي الرئيسي' || (toId && oldBankIds.has(toId))) {
+    if (oldBankNames.has(toAcc) || toAcc === 'الحساب البنكي' || toAcc === 'بنك الشامل' || (toId && oldBankIds.has(toId))) {
       toAcc = PRIMARY_BANK_NAME;
       toId = primaryBankId;
     }
@@ -180,7 +180,7 @@ export function migrateBankAccountsPure(
   });
 
   const updatedSubscriptions = subscriptions.map(sub => {
-    if (sub.paymentAccount && (oldBankNames.has(sub.paymentAccount) || sub.paymentAccount === 'الحساب البنكي' || sub.paymentAccount === 'الحساب البنكي الرئيسي')) {
+    if (sub.paymentAccount && (oldBankNames.has(sub.paymentAccount) || sub.paymentAccount === 'الحساب البنكي' || sub.paymentAccount === 'بنك الشامل')) {
       return {
         ...sub,
         paymentAccount: PRIMARY_BANK_NAME,
@@ -224,6 +224,9 @@ export async function executeBankMigrationTransactional(
   ]);
 
   const rawAccounts = accSnap.docs.map(d => ({ id: d.id, ...d.data() } as AccountItem));
+  // Note: expenses, transactions, subscriptions are only updated for their names/IDs, not balances, so outside fetch is ok for them.
+  // BUT we must fetch accounts inside tx to get accurate balances.
+  
   const rawExpenses = expSnap.docs.map(d => ({ id: d.id, ...d.data() } as Expense));
   const rawTransactions = transSnap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
   const rawSubscriptions = subSnap.docs.map(d => ({ id: d.id, ...d.data() } as SubscriptionBill));
@@ -233,13 +236,19 @@ export async function executeBankMigrationTransactional(
     const settingsSnap = await tx.get(settingsDocRef);
     const settingsData = settingsSnap.exists() ? (settingsSnap.data() as UserSettings) : null;
     
+    // Read all account documents inside transaction to get latest balances
+    const accountRefs = rawAccounts.map(a => doc(db, 'accounts', a.id!));
+    const txAccountSnaps = await Promise.all(accountRefs.map(ref => tx.get(ref)));
+    const txAccounts = txAccountSnaps.map(snap => ({ id: snap.id, ...snap.data() } as AccountItem));
+
+    
     if (settingsData && (settingsData.bankAccountMigrationVersion || 0) >= CURRENT_BANK_MIGRATION_VERSION) {
       return { success: true, message: 'Already migrated', version: settingsData.bankAccountMigrationVersion || 1 };
     }
 
     // Run pure calculation
     const migration = migrateBankAccountsPure(
-      rawAccounts,
+      txAccounts,
       rawExpenses,
       rawTransactions,
       rawSubscriptions,
@@ -261,7 +270,7 @@ export async function executeBankMigrationTransactional(
       isArchived: false,
       isPrimaryBank: true,
       role: 'primary_bank',
-      notes: 'الحساب البنكي الرئيسي والوحيد في النظام'
+      notes: 'بنك الشامل والوحيد في النظام'
     }, { merge: true });
 
     // 2. Delete redundant bank accounts
@@ -284,9 +293,9 @@ export async function executeBankMigrationTransactional(
       if (t.id && (t.fromAccount === PRIMARY_BANK_NAME || t.toAccount === PRIMARY_BANK_NAME)) {
         tx.update(doc(db, 'transactions', t.id), {
           fromAccount: t.fromAccount,
-          fromAccountId: t.fromAccountId || migration.primaryBank.id,
+          fromAccountId: t.fromAccountId,
           toAccount: t.toAccount,
-          toAccountId: t.toAccountId || migration.primaryBank.id
+          toAccountId: t.toAccountId
         });
       }
     }

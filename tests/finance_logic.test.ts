@@ -39,13 +39,13 @@ describe('MAGEDmony Financial Logic Tests', () => {
   // Test 3: Bulk clearing expenses restores all account balances accurately
   it('restores all account balances correctly when bulk clearing expenses', () => {
     const accounts: Record<string, number> = {
-      'الحساب البنكي الرئيسي': 1000,
+      'بنك الشامل': 1000,
       'صندوق الطوارئ': 500
     };
 
     const expensesToClear = [
-      { amount: 100, paymentMethod: 'الحساب البنكي الرئيسي' },
-      { amount: 200, paymentMethod: 'الحساب البنكي الرئيسي' },
+      { amount: 100, paymentMethod: 'بنك الشامل' },
+      { amount: 200, paymentMethod: 'بنك الشامل' },
       { amount: 50, paymentMethod: 'صندوق الطوارئ' }
     ];
 
@@ -59,7 +59,7 @@ describe('MAGEDmony Financial Logic Tests', () => {
       accounts[acc] += amt;
     }
 
-    expect(accounts['الحساب البنكي الرئيسي']).toBe(1300);
+    expect(accounts['بنك الشامل']).toBe(1300);
     expect(accounts['صندوق الطوارئ']).toBe(550);
   });
 
@@ -213,7 +213,7 @@ describe('MAGEDmony Financial Logic Tests', () => {
 
   // Test 10: Inter-account transfer validation (insufficient source balance and self-transfer)
   it('validates inter-account transfers preventing self-transfer and source deficits', () => {
-    const fromAccount = { name: 'الحساب البنكي الرئيسي', balance: 200 };
+    const fromAccount = { name: 'بنك الشامل', balance: 200 };
     const toAccount = { name: 'صندوق الادخار', balance: 500 };
 
     // Self transfer check

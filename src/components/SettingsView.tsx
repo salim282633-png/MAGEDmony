@@ -1,3 +1,4 @@
+import { getPrimaryBankAccount } from '../types';
 import React, { useState, useEffect } from 'react';
 import { 
   Coins, 
@@ -216,7 +217,7 @@ export function SettingsView({
     const debtAcc = accounts.find(a => a.name.includes('الديون'));
     const emergencyAcc = accounts.find(a => a.name.includes('الطوارئ'));
     const savingsAcc = accounts.find(a => a.name.includes('الادخار'));
-    const mainAcc = accounts.find(a => a.name.includes('الحساب البنكي الرئيسي') || a.name.includes('المصاريف'));
+    const mainAcc = getPrimaryBankAccount(accounts);
 
     const debtPlanned = Math.round(currentSalary * 0.26); // 650
     const emergencyPlanned = Math.round(currentSalary * 0.16); // 400

@@ -252,6 +252,7 @@ export function TenYearJourneyView({
             <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight">
               إذا استمرت خطتي الحالية، أين سأكون بعد 10 سنوات؟
             </h1>
+            <p className="text-emerald-200/90 text-[11px] md:text-xs font-bold max-w-2xl mt-2 bg-emerald-900/30 p-2 rounded-lg border border-emerald-500/20">💡 <b>ملاحظة:</b> محرك المحاكاة يفترض أن مخصص الديون (26%) يتم استخدامه فعليًا لسداد الديون القائمة شهريًا بانتظام، مما يؤدي إلى خفض إجمالي الدين حتى سداده بالكامل، ليعاد توجيه المخصص للادخار.</p>
             <p className="text-slate-300 text-xs md:text-sm font-bold max-w-2xl leading-relaxed">
               محاكاة شهرية دقيقة قائمة على منطق التحويل الذكي: 46% معيشة، والتوجيه التلقائي لمخصصات الديون والطوارئ نحو الادخار والاستثمار (حتى 54%) فور اكتمالها.
             </p>
