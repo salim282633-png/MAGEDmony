@@ -8,10 +8,11 @@ import { TableView } from './TableView';
 import { formatCurrency, cn } from '../lib/utils';
 import { Plus, Trash2, CheckCircle2, Clock, Landmark, Wallet, ShieldAlert } from 'lucide-react';
 import React, { useState } from 'react';
-import { addDoc, collection, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { motion } from 'motion/react';
 import { MetricCard } from './MetricCard';
+import { useFinanceData } from '../lib/useFinanceData';
 
 interface DebtViewProps {
   debts: DebtItem[];
@@ -20,6 +21,7 @@ interface DebtViewProps {
 }
 
 export function DebtView({ debts, settings, accounts }: DebtViewProps) {
+  const { payDebtPart } = useFinanceData();
   const salary = settings?.salary || 2500;
   const debtDeduction = Math.round(salary * 0.26);
 
@@ -51,21 +53,7 @@ export function DebtView({ debts, settings, accounts }: DebtViewProps) {
     const paid = parseFloat(payAmountInput);
     if (isNaN(paid) || paid <= 0) return;
 
-    const newPaid = Math.min(currentPaid + paid, total);
-    const newStatus = newPaid === total ? 'تم' : 'قيد الانتظار';
-    
-    await updateDoc(doc(db, 'debts', id), {
-      paidAmount: newPaid,
-      status: newStatus
-    });
-
-    // Also deduct from the "صندوق سداد الديون" account if it exists
-    const debtAcc = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
-    if (debtAcc && debtAcc.id) {
-      await updateDoc(doc(db, 'accounts', debtAcc.id), {
-        balance: (debtAcc.balance || 0) - paid
-      });
-    }
+    await payDebtPart(id, paid);
 
     setPayingDebtId(null);
     setPayAmountInput('');
@@ -93,24 +81,10 @@ export function DebtView({ debts, settings, accounts }: DebtViewProps) {
   const handleApplySnowball = async (targetDebtId: string, amount: number) => {
     const target = debts.find(d => d.id === targetDebtId);
     if (!target || !target.id) return;
-    const currentPaid = target.paidAmount || 0;
-    const newPaid = Math.min(target.totalAmount, currentPaid + amount);
-    const newStatus = newPaid >= target.totalAmount ? 'تم' : 'قيد الانتظار';
+    
+    await payDebtPart(target.id, amount);
 
-    await updateDoc(doc(db, 'debts', target.id), {
-      paidAmount: newPaid,
-      status: newStatus
-    });
-
-    // Deduct from the "صندوق سداد الديون" account
-    const debtAcc = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
-    if (debtAcc && debtAcc.id) {
-      await updateDoc(doc(db, 'accounts', debtAcc.id), {
-        balance: (debtAcc.balance || 0) - amount
-      });
-    }
-
-    setSnowballSuccessMsg(`🎉 تم تطبيق استراتيجية كرة الثلج (Snowball)! تحويل ${formatCurrency(amount)} لسداد ${target.name}. المتبقي منها الآن: ${formatCurrency(target.totalAmount - newPaid)} ريال فقط!`);
+    setSnowballSuccessMsg(`🎉 تم تطبيق استراتيجية كرة الثلج (Snowball)! تحويل ${formatCurrency(amount)} لسداد ${target.name}.`);
     setTimeout(() => setSnowballSuccessMsg(null), 3000);
   };
 

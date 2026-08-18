@@ -20,6 +20,8 @@ export interface UserSettings {
   payDay?: number;
   emergencyCapMonths?: number; // Target months for emergency fund (3 or 6)
   privacy?: PrivacySettings;
+  initialized?: boolean;
+  onboardingCompleted?: boolean;
 }
 
 export interface BudgetItem {
@@ -91,6 +93,8 @@ export interface Expense {
   tags?: string[]; // الوسوم
   location?: string; // الموقع (اختياري)
   notes?: string;
+  referenceId?: string; // Unique reference for batch or linked processes
+  idempotencyKey?: string;
   extraIncomeAllocation?: ExtraIncomeAllocation;
   allocatedAmounts?: {
     living?: number;
@@ -178,6 +182,8 @@ export interface Transaction {
   amount: number;
   date: string;
   notes?: string;
+  referenceId?: string;
+  idempotencyKey?: string;
 }
 
 export interface FinancialGoal {

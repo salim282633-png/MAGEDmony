@@ -35,6 +35,7 @@ import {
   Info
 } from 'lucide-react';
 import { addDoc, collection, deleteDoc, doc, updateDoc, increment } from 'firebase/firestore';
+import { useFinanceData } from '../lib/useFinanceData';
 import { db, auth } from '../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -47,6 +48,7 @@ interface ExpenseViewProps {
 }
 
 export function ExpenseView({ expenses, accounts = [], settings = null, debts = [], initialTypeFilter = 'الكل' }: ExpenseViewProps) {
+  const { addTransaction, updateExpenseTransactional, deleteTransaction } = useFinanceData();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Expense | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -178,46 +180,9 @@ export function ExpenseView({ expenses, accounts = [], settings = null, debts = 
     if (!auth.currentUser) return;
 
     if (editingItem && editingItem.id) {
-      await updateDoc(doc(db, 'expenses', editingItem.id), {
-        ...formData
-      });
-      // Adjust balance based on edit delta
-      if (formData.paymentMethod && accounts) {
-        const acc = accounts.find(a => a.name === formData.paymentMethod);
-        if (acc && acc.id) {
-          const oldAmount = editingItem.amount || 0;
-          const newAmount = formData.amount || 0;
-          let delta = 0;
-          
-          if (formData.type === 'مصروف') {
-             delta = oldAmount - newAmount; // If expense increases, delta is negative (subtract from balance)
-          } else {
-             delta = newAmount - oldAmount; // If income increases, delta is positive (add to balance)
-          }
-          
-          if (delta !== 0) {
-            await updateDoc(doc(db, 'accounts', acc.id), {
-              balance: increment(delta)
-            });
-          }
-        }
-      }
+      await updateExpenseTransactional(editingItem.id, formData);
     } else {
-      await addDoc(collection(db, 'expenses'), {
-        ...formData,
-        userId: auth.currentUser.uid,
-      });
-      
-      // Update account balance for new entry
-      if (formData.paymentMethod && formData.amount && accounts) {
-        const acc = accounts.find(a => a.name === formData.paymentMethod);
-        if (acc && acc.id) {
-          const delta = formData.type === 'مصروف' ? -formData.amount : formData.amount;
-          await updateDoc(doc(db, 'accounts', acc.id), {
-            balance: increment(delta)
-          });
-        }
-      }
+      await addTransaction(formData as Omit<Expense, 'id' | 'userId'>);
     }
 
     closeModal();
@@ -225,18 +190,7 @@ export function ExpenseView({ expenses, accounts = [], settings = null, debts = 
 
   // Delete Handler
   const handleDelete = async (id: string) => {
-    const itemToDelete = expenses.find(e => e.id === id);
-    if (itemToDelete && itemToDelete.paymentMethod && accounts) {
-      const acc = accounts.find(a => a.name === itemToDelete.paymentMethod);
-      if (acc && acc.id) {
-        // Revert the transaction: Add back the expense, or subtract the income
-        const delta = itemToDelete.type === 'مصروف' ? itemToDelete.amount : -itemToDelete.amount;
-        await updateDoc(doc(db, 'accounts', acc.id), {
-          balance: increment(delta)
-        });
-      }
-    }
-    await deleteDoc(doc(db, 'expenses', id));
+    await deleteTransaction(id);
   };
 
   // Clear All Expenses Handler

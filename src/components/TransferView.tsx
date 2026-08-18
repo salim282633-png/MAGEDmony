@@ -9,8 +9,7 @@ import { TableView } from './TableView';
 import { MetricCard } from './MetricCard';
 import { ArrowLeftRight, Plus, Trash2, History } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { addDoc, collection, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { useFinanceData } from '../lib/useFinanceData';
 
 interface TransferViewProps {
   transactions: Transaction[];
@@ -18,6 +17,7 @@ interface TransferViewProps {
 }
 
 export function TransferView({ transactions, accounts = [] }: TransferViewProps) {
+  const { addTransferTransactional, deleteTransferTransactional } = useFinanceData();
   const [isAdding, setIsAdding] = useState(false);
   const [newItem, setNewItem] = useState<Partial<Transaction>>({
     fromAccount: '',
@@ -32,34 +32,19 @@ export function TransferView({ transactions, accounts = [] }: TransferViewProps)
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!auth.currentUser) return;
     if (!newItem.fromAccount || !newItem.toAccount || !newItem.amount) return;
     if (newItem.fromAccount === newItem.toAccount) {
       alert('لا يمكن التحويل لنفس الحساب');
       return;
     }
     
-    // Save transaction
-    await addDoc(collection(db, 'transactions'), {
-      ...newItem,
-      userId: auth.currentUser.uid,
+    await addTransferTransactional({
+      fromAccount: newItem.fromAccount,
+      toAccount: newItem.toAccount,
+      amount: newItem.amount,
+      date: newItem.date || new Date().toISOString().split('T')[0],
+      notes: newItem.notes || ''
     });
-
-    // Update account balances if matching accounts found
-    const fromAcc = accounts.find(a => a.name === newItem.fromAccount);
-    const toAcc = accounts.find(a => a.name === newItem.toAccount);
-
-    if (fromAcc && fromAcc.id) {
-      await updateDoc(doc(db, 'accounts', fromAcc.id), {
-        balance: (fromAcc.balance || 0) - (newItem.amount || 0)
-      });
-    }
-
-    if (toAcc && toAcc.id) {
-      await updateDoc(doc(db, 'accounts', toAcc.id), {
-        balance: (toAcc.balance || 0) + (newItem.amount || 0)
-      });
-    }
 
     setNewItem({ 
       fromAccount: '', 
@@ -72,7 +57,7 @@ export function TransferView({ transactions, accounts = [] }: TransferViewProps)
   };
 
   const handleDelete = async (id: string) => {
-    await deleteDoc(doc(db, 'transactions', id));
+    await deleteTransferTransactional(id);
   };
 
   return (

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   collection, 
   query, 
@@ -14,7 +14,10 @@ import {
   updateDoc, 
   deleteDoc, 
   addDoc,
-  increment
+  runTransaction,
+  writeBatch,
+  getDocs,
+  getDoc
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { 
@@ -63,6 +66,13 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
+// Generate unique reference ID
+export function generateReferenceId(prefix: string = 'tx'): string {
+  const timestamp = Date.now().toString(36);
+  const randomPart = Math.random().toString(36).substring(2, 9);
+  return `${prefix}_${timestamp}_${randomPart}`;
+}
+
 export function useFinanceData() {
   const [user, setUser] = useState(auth.currentUser);
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -79,7 +89,6 @@ export function useFinanceData() {
   const [financialEvents, setFinancialEvents] = useState<FinancialEvent[]>([]);
   const [monthlyClosures, setMonthlyClosures] = useState<MonthlyClosure[]>([]);
   const [loading, setLoading] = useState(true);
-  const hasSeededTransfersRef = useRef(false);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((u) => {
@@ -96,67 +105,35 @@ export function useFinanceData() {
 
     const userId = user.uid;
 
-    // Settings
+    // 1. Settings & Initial Setup (Only runs once on brand new user profile)
     const unsubSettings = onSnapshot(doc(db, 'settings', userId), async (settingsDoc) => {
       if (settingsDoc.exists()) {
         const data = settingsDoc.data() as UserSettings;
         setSettings(data);
-        if (!data.salary || data.salary === 7000 || data.salary === 10000) {
-          await setDoc(doc(db, 'settings', userId), { salary: 2500 }, { merge: true }).catch(console.error);
-        }
       } else {
+        // First-time onboarding for this user
         const initialSettings: UserSettings = {
           userId,
           salary: 2500,
-          currency: 'ريال سعودي'
+          currency: 'ريال سعودي',
+          initialized: true,
+          onboardingCompleted: true
         };
         await setDoc(doc(db, 'settings', userId), initialSettings).catch(console.error);
-      }
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'settings'));
 
-    // Budgets
-    const unsubBudget = onSnapshot(query(collection(db, 'budgets'), where('userId', '==', userId)), async (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as BudgetItem));
-      setBudget(fetched);
-      if (snap.empty) {
-        const currentMonth = new Date().toISOString().slice(0, 7);
-        const defaults: Omit<BudgetItem, 'id'>[] = [
-          { userId, name: 'السكن والإيجار', planned: 2500, actual: 2500, month: currentMonth, notes: 'التزام شهري حتمي' },
-          { userId, name: 'الادخار والتوفير', planned: 1000, actual: 1000, month: currentMonth, notes: 'مخصص شهري تلقائي' },
-          { userId, name: 'المصاريف الشخصية والطعام', planned: 2000, actual: 1500, month: currentMonth, notes: 'مصاريف معيشية يومية' }
+        // Seed initial default accounts once
+        const defaultAccounts: Omit<AccountItem, 'id'>[] = [
+          { userId, name: 'الحساب البنكي الرئيسي', type: 'الحساب البنكي', balance: 1150, currency: 'ريال سعودي', isArchived: false, notes: 'حساب تحويل الراتب الرئيسي ومخصص المعيشة' },
+          { userId, name: 'صندوق سداد الديون', type: 'صندوق مخصص', balance: 650, currency: 'ريال سعودي', isArchived: false, notes: 'مخصص سداد الديون (26%)' },
+          { userId, name: 'صندوق الطوارئ', type: 'صندوق مخصص', balance: 400, currency: 'ريال سعودي', isArchived: false, notes: 'مخصص الطوارئ (16%)' },
+          { userId, name: 'صندوق الادخار والاستثمار', type: 'صندوق مخصص', balance: 300, currency: 'ريال سعودي', isArchived: false, notes: 'مخصص الادخار والاستثمار (12%)' },
+          { userId, name: 'المحفظة النقدية', type: 'نقد', balance: 0, currency: 'ريال سعودي', isArchived: false, notes: 'كاش للمصاريف اليومية' }
         ];
-        defaults.forEach(b => addDoc(collection(db, 'budgets'), b));
-      }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'budgets'));
-
-    // Debts
-    const unsubDebts = onSnapshot(query(collection(db, 'debts'), where('userId', '==', userId)), async (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as DebtItem));
-      
-      // Auto-deduplicate duplicate debts with same name, totalAmount, and paidAmount
-      const seenDebtKeys = new Set<string>();
-      const duplicatesToDelete: DebtItem[] = [];
-      const uniqueDebts: DebtItem[] = [];
-
-      for (const debt of fetched) {
-        const key = `${(debt.name || '').trim()}_${debt.totalAmount}_${debt.paidAmount}`;
-        if (seenDebtKeys.has(key)) {
-          duplicatesToDelete.push(debt);
-        } else {
-          seenDebtKeys.add(key);
-          uniqueDebts.push(debt);
+        for (const acc of defaultAccounts) {
+          await addDoc(collection(db, 'accounts'), acc).catch(console.error);
         }
-      }
 
-      for (const dup of duplicatesToDelete) {
-        if (dup.id) {
-          await deleteDoc(doc(db, 'debts', dup.id)).catch(console.error);
-        }
-      }
-
-      setDebts(uniqueDebts);
-
-      if (snap.empty) {
+        // Seed initial default debt once
         const defaultDebt: Omit<DebtItem, 'id'> = {
           userId,
           name: 'دين المعيشة',
@@ -165,303 +142,66 @@ export function useFinanceData() {
           status: 'قيد الانتظار',
           dueDate: new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0]
         };
-        addDoc(collection(db, 'debts'), defaultDebt).catch(console.error);
+        await addDoc(collection(db, 'debts'), defaultDebt).catch(console.error);
       }
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'settings'));
+
+    // 2. Budgets
+    const unsubBudget = onSnapshot(query(collection(db, 'budgets'), where('userId', '==', userId)), (snap) => {
+      setBudget(snap.docs.map(d => ({ id: d.id, ...d.data() } as BudgetItem)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'budgets'));
+
+    // 3. Debts
+    const unsubDebts = onSnapshot(query(collection(db, 'debts'), where('userId', '==', userId)), (snap) => {
+      setDebts(snap.docs.map(d => ({ id: d.id, ...d.data() } as DebtItem)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'debts'));
 
-    // Savings
-    const unsubSavings = onSnapshot(query(collection(db, 'savings'), where('userId', '==', userId)), async (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as SavingsRecord));
-      setSavings(fetched);
+    // 4. Savings
+    const unsubSavings = onSnapshot(query(collection(db, 'savings'), where('userId', '==', userId)), (snap) => {
+      setSavings(snap.docs.map(d => ({ id: d.id, ...d.data() } as SavingsRecord)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'savings'));
 
-    // Expenses & Income
-    const unsubExpenses = onSnapshot(query(collection(db, 'expenses'), where('userId', '==', userId)), async (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense));
-      setExpenses(fetched);
-
-      // Auto-deduplicate duplicate salary distribution transactions and remove unwanted 300 SAR income entry
-      const seenSalaryKeys = new Set<string>();
-      const duplicateIdsToDelete: string[] = [];
-
-      for (const item of fetched) {
-        // Automatically fix the 250 SAR transaction to ensure it is treated as a regular living expense (Food/Living) not debt
-        if (item.amount === 250 && item.id && (item.category === 'الديون' || item.category === 'سداد دين' || item.paymentMethod === 'صندوق سداد الديون' || item.description?.includes('دين'))) {
-          updateDoc(doc(db, 'expenses', item.id), {
-            category: 'الطعام',
-            description: 'مصاريف طعام ومعيشة',
-            paymentMethod: 'الحساب البنكي الرئيسي',
-            type: 'مصروف'
-          }).catch(console.error);
-        }
-
-        // Unify category name to 'الطعام' for any 'الطعام والمشروبات'
-        if (item.id && item.category === 'الطعام والمشروبات') {
-          updateDoc(doc(db, 'expenses', item.id), {
-            category: 'الطعام'
-          }).catch(console.error);
-        }
-
-        // Automatically delete any unwanted legacy 300 SAR income transaction or 400/300 fake expenses
-        if (item.type === 'دخل' && (item.amount === 300 || item.description?.includes('300'))) {
-          if (item.id) duplicateIdsToDelete.push(item.id);
-          continue;
-        }
-
-        // Delete any mistaken internal transfers logged as expenses
-        const isValidSalaryDistribution = item.type === 'دخل' && item.category === 'الراتب' && item.description?.includes('توزيع');
-        if (!isValidSalaryDistribution && (item.category === 'صندوق مخصص' || item.description?.includes('توزيع') || item.description?.includes('تخصيص') || item.description?.includes('استثمار') || item.description?.includes('طوارئ'))) {
-          if (item.id) duplicateIdsToDelete.push(item.id);
-          continue;
-        }
-
-        // Auto delete if there's a 700 or 750 fake expense or luxury transfer, just to be sure
-        if (item.amount === 700 || item.amount === 750 || item.description?.includes('كماليات') || item.category?.includes('كماليات')) {
-           if (item.id) duplicateIdsToDelete.push(item.id);
-           continue;
-        }
-
-        // Automatically delete specified test/mock expenses (200, 300, 200) that are not Food (الطعام)
-        if ((item.amount === 200 || item.amount === 300) && item.type !== 'دخل' && item.category !== 'الطعام') {
-          if (item.id) duplicateIdsToDelete.push(item.id);
-          continue;
-        }
-
-        // Delete any 300, 400 that are expenses and appear to be dummy
-        if ((item.amount === 300 || item.amount === 400) && item.type !== 'دخل') {
-           if (item.id) duplicateIdsToDelete.push(item.id);
-           continue;
-        }
-
-        if (item.category === 'الراتب') {
-          const monthKey = item.date ? item.date.substring(0, 7) : '';
-          const key = `salary_${monthKey}`;
-          if (seenSalaryKeys.has(key)) {
-            if (item.id) duplicateIdsToDelete.push(item.id);
-          } else {
-            seenSalaryKeys.add(key);
-          }
-        }
-      }
-
-      if (duplicateIdsToDelete.length > 0) {
-        duplicateIdsToDelete.forEach(async (id) => {
-          const item = fetched.find(e => e.id === id);
-          if (item && item.paymentMethod && item.amount) {
-            const acc = accounts.find(a => a.name === item.paymentMethod);
-            if (acc && acc.id) {
-              const delta = item.type === 'دخل' ? -item.amount : item.amount;
-              await updateDoc(doc(db, 'accounts', acc.id), {
-                balance: increment(delta)
-              }).catch(console.error);
-            }
-          }
-          deleteDoc(doc(db, 'expenses', id)).catch(console.error);
-        });
-      }
-
-      if (snap.empty) {
-        const today = new Date().toISOString().split('T')[0];
-        const defaultIncome: Omit<Expense, 'id'> = {
-          userId,
-          type: 'دخل',
-          date: today,
-          category: 'الراتب',
-          description: 'راتب شهري',
-          amount: 2500,
-          paymentMethod: 'الحساب البنكي الرئيسي'
-        };
-        addDoc(collection(db, 'expenses'), defaultIncome).catch(console.error);
-      }
+    // 5. Expenses & Income (No hardcoded filtering or deletion)
+    const unsubExpenses = onSnapshot(query(collection(db, 'expenses'), where('userId', '==', userId)), (snap) => {
+      setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'expenses'));
 
-    // Tasks
+    // 6. Tasks
     const unsubTasks = onSnapshot(query(collection(db, 'tasks'), where('userId', '==', userId)), (snap) => {
       setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'tasks'));
 
-    // Goals
+    // 7. Goals
     const unsubGoals = onSnapshot(query(collection(db, 'goals'), where('userId', '==', userId)), (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialGoal));
-      setGoals(fetched);
-      if (snap.empty) {
-        const defaults = [
-          { title: 'ادخار شهري للإنقاذ والطوارئ', targetAmount: 1000, currentAmount: 0, status: 'جاري التنفيذ' }
-        ];
-        defaults.forEach(g => addDoc(collection(db, 'goals'), { ...g, userId }));
-      }
+      setGoals(snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialGoal)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'goals'));
 
-    // Transactions
-    const unsubTrans = onSnapshot(query(collection(db, 'transactions'), where('userId', '==', userId)), async (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
-
-      // 1. Identify unwanted entries (e.g. 750 SAR or luxury entries)
-      const toDelete = fetched.filter(t => 
-        t.amount === 750 || 
-        t.notes?.includes('كماليات') || 
-        t.fromAccount?.includes('كماليات') || 
-        t.toAccount?.includes('كماليات')
-      );
-
-      // 2. Identify duplicate transfers (same fromAccount, toAccount, and amount)
-      const seenKeys = new Set<string>();
-      const duplicatesToDelete: Transaction[] = [];
-      const uniqueTransfers: Transaction[] = [];
-
-      for (const t of fetched) {
-        if (toDelete.some(td => td.id === t.id)) continue;
-
-        const fromAcc = (t.fromAccount || '').trim();
-        const toAcc = (t.toAccount || '').trim();
-        const key = `${fromAcc}->${toAcc}_${t.amount}`;
-
-        if (seenKeys.has(key)) {
-          duplicatesToDelete.push(t);
-        } else {
-          seenKeys.add(key);
-          uniqueTransfers.push(t);
-        }
-      }
-
-      // Delete unwanted and duplicate items from Firestore asynchronously
-      const allToDelete = [...toDelete, ...duplicatesToDelete];
-      for (const t of allToDelete) {
-        if (t.id) {
-          await deleteDoc(doc(db, 'transactions', t.id)).catch(console.error);
-        }
-      }
-
-      setTransactions(uniqueTransfers);
-
-      // Seed missing default transfers ONCE if needed
-      if (!hasSeededTransfersRef.current) {
-        hasSeededTransfersRef.current = true;
-        const today = new Date().toISOString().split('T')[0];
-        const defaultTransfers = [
-          { fromAccount: 'الحساب البنكي الرئيسي', toAccount: 'صندوق سداد الديون', amount: 650, notes: 'تخصيص آلي - سداد الديون (26%)' },
-          { fromAccount: 'الحساب البنكي الرئيسي', toAccount: 'صندوق الطوارئ', amount: 400, notes: 'تخصيص آلي - صندوق الطوارئ (16%)' },
-          { fromAccount: 'الحساب البنكي الرئيسي', toAccount: 'صندوق الادخار والاستثمار', amount: 300, notes: 'تخصيص آلي - الادخار والاستثمار (12%)' },
-        ];
-
-        for (const dt of defaultTransfers) {
-          const exists = uniqueTransfers.some(t => 
-            (t.toAccount === dt.toAccount || (t.toAccount && dt.toAccount.includes(dt.toAccount.replace('صندوق ', '')))) && 
-            t.amount === dt.amount
-          );
-          if (!exists) {
-            await addDoc(collection(db, 'transactions'), {
-              userId,
-              ...dt,
-              date: today
-            }).catch(console.error);
-          }
-        }
-      }
+    // 8. Transactions (No hardcoded filtering or deletion)
+    const unsubTrans = onSnapshot(query(collection(db, 'transactions'), where('userId', '==', userId)), (snap) => {
+      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'transactions'));
 
-    // Accounts
-    const unsubAccounts = onSnapshot(query(collection(db, 'accounts'), where('userId', '==', userId)), async (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountItem));
-      setAccounts(fetched);
-
-      if (snap.empty) {
-        const defaults: Omit<AccountItem, 'id'>[] = [
-          { userId, name: 'الحساب البنكي الرئيسي', type: 'الحساب البنكي', balance: 2500, currency: 'ريال سعودي', isArchived: false, notes: 'حساب تحويل الراتب الرئيسي' },
-          { userId, name: 'صندوق الطوارئ', type: 'صندوق مخصص', balance: 400, currency: 'ريال سعودي', isArchived: false, notes: 'صندوق مخصص للطوارئ لتغطية 3-6 أشهر' },
-          { userId, name: 'صندوق الادخار والاستثمار', type: 'صندوق مخصص', balance: 300, currency: 'ريال سعودي', isArchived: false, notes: 'صندوق الادخار والاستثمار طويل المدى' },
-          { userId, name: 'صندوق سداد الديون', type: 'صندوق مخصص', balance: 650, currency: 'ريال سعودي', isArchived: false, notes: 'صندوق مخصص لسداد الديون' },
-          { userId, name: 'صندوق المصاريف الأساسية', type: 'صندوق مخصص', balance: 1150, currency: 'ريال سعودي', isArchived: false, notes: 'صندوق المصاريف التشغيلية والأساسية' },
-          { userId, name: 'المحفظة النقدية', type: 'نقد', balance: 0, currency: 'ريال سعودي', isArchived: false, notes: 'كاش للمصاريف اليومية' }
-        ];
-        defaults.forEach(acc => addDoc(collection(db, 'accounts'), acc));
-      } else {
-        // Ensure core funds exist and have valid non-zero initial balances if currently zero
-        const coreBoxesDefaults: Record<string, { balance: number; notes: string; type: string }> = {
-          'صندوق الطوارئ': { balance: 400, notes: 'صندوق مخصص للطوارئ لتغطية 3-6 أشهر', type: 'صندوق مخصص' },
-          'صندوق الادخار والاستثمار': { balance: 300, notes: 'صندوق الادخار والاستثمار طويل المدى', type: 'صندوق مخصص' },
-          'صندوق سداد الديون': { balance: 650, notes: 'صندوق مخصص لسداد الديون', type: 'صندوق مخصص' },
-          'الحساب البنكي الرئيسي': { balance: 1150, notes: 'حساب تحويل الراتب الرئيسي ومخصص المعيشة', type: 'الحساب البنكي' }
-        };
-
-        for (const [boxName, def] of Object.entries(coreBoxesDefaults)) {
-          const existing = fetched.find(a => a.name === boxName || a.name.includes(boxName));
-          if (!existing) {
-            await addDoc(collection(db, 'accounts'), {
-              userId,
-              name: boxName,
-              type: def.type,
-              balance: def.balance,
-              currency: 'ريال سعودي',
-              isArchived: false,
-              notes: def.notes
-            }).catch(console.error);
-          } else if ((existing.balance || 0) === 0 && existing.id) {
-            // If balance is 0, restore default allocation
-            await updateDoc(doc(db, 'accounts', existing.id), {
-              balance: def.balance
-            }).catch(console.error);
-          }
-        }
-        
-
-      }
+    // 9. Accounts (Zero is a completely valid balance - never auto-refill on zero)
+    const unsubAccounts = onSnapshot(query(collection(db, 'accounts'), where('userId', '==', userId)), (snap) => {
+      setAccounts(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountItem)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'accounts'));
 
-    // Investments
+    // 10. Investments
     const unsubInvestments = onSnapshot(query(collection(db, 'investments'), where('userId', '==', userId)), (snap) => {
       setInvestments(snap.docs.map(d => ({ id: d.id, ...d.data() } as InvestmentItem)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'investments'));
 
-    // Subscriptions & Bills
-    const unsubSubscriptions = onSnapshot(query(collection(db, 'subscriptions'), where('userId', '==', userId)), async (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as SubscriptionBill));
-      setSubscriptions(fetched);
-
-      if (snap.empty) {
-        const today = new Date();
-        const futureDate = new Date(today);
-        futureDate.setDate(futureDate.getDate() + 10);
-        const dueDateStr = futureDate.toISOString().split('T')[0];
-
-        const defaults: Omit<SubscriptionBill, 'id'>[] = [
-          { 
-            userId, 
-            name: 'فاتورة الإيجار', 
-            category: 'الإيجار', 
-            amount: 2500, 
-            currency: 'ريال', 
-            dueDate: dueDateStr, 
-            cycle: 'شهري', 
-            status: 'غير مدفوع', 
-            reminderDaysBefore: 5, 
-            isReminderActive: true, 
-            paymentAccount: 'الحساب البنكي الرئيسي' 
-          },
-          { 
-            userId, 
-            name: 'فاتورة الكهرباء والإنترنت', 
-            category: 'الكهرباء', 
-            amount: 400, 
-            currency: 'ريال', 
-            dueDate: dueDateStr, 
-            cycle: 'شهري', 
-            status: 'غير مدفوع', 
-            reminderDaysBefore: 3, 
-            isReminderActive: true, 
-            paymentAccount: 'الحساب البنكي الرئيسي' 
-          }
-        ];
-        defaults.forEach(sub => addDoc(collection(db, 'subscriptions'), sub));
-      }
+    // 11. Subscriptions & Bills
+    const unsubSubscriptions = onSnapshot(query(collection(db, 'subscriptions'), where('userId', '==', userId)), (snap) => {
+      setSubscriptions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubscriptionBill)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'subscriptions'));
 
-    // Events
+    // 12. Events
     const unsubEvents = onSnapshot(query(collection(db, 'financial_events'), where('userId', '==', userId)), (snap) => {
       setFinancialEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialEvent)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'financial_events'));
 
-    // Monthly Closures
+    // 13. Monthly Closures
     const unsubMonthlyClosures = onSnapshot(query(collection(db, 'monthly_closures'), where('userId', '==', userId)), (snap) => {
       setMonthlyClosures(snap.docs.map(d => ({ id: d.id, ...d.data() } as MonthlyClosure)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'monthly_closures'));
@@ -485,7 +225,7 @@ export function useFinanceData() {
     };
   }, [user]);
 
-  // Helper Actions
+  // Helper to find matching account
   const findAccountByMethod = (method?: string) => {
     if (!method || method === 'الحساب البنكي' || method === 'الحساب البنكي الرئيسي') {
       return accounts.find(a => a.name.includes('الرئيسي') || a.name.includes('المصاريف') || a.type === 'الحساب البنكي');
@@ -497,44 +237,558 @@ export function useFinanceData() {
     );
   };
 
+  // =========================================================================
+  // TRANSACTIONAL OPERATIONS (Atomic Firestore Transactions)
+  // =========================================================================
+
+  /**
+   * Add Expense or Income + update account balance atomically
+   */
   const addTransaction = async (expense: Omit<Expense, 'id' | 'userId'>) => {
     if (!user) return;
     try {
-      const docRef = await addDoc(collection(db, 'expenses'), { ...expense, userId: user.uid });
-      // Update account balance if matching account exists
-      if (expense.amount) {
-        const acc = findAccountByMethod(expense.paymentMethod);
-        if (acc && acc.id) {
-          const delta = expense.type === 'دخل' ? expense.amount : -expense.amount;
-          await updateDoc(doc(db, 'accounts', acc.id), {
-            balance: increment(delta)
-          });
+      const refId = expense.referenceId || generateReferenceId(expense.type === 'دخل' ? 'inc' : 'exp');
+      const targetAcc = findAccountByMethod(expense.paymentMethod);
+      const accRef = targetAcc?.id ? doc(db, 'accounts', targetAcc.id) : null;
+      const newExpenseRef = doc(collection(db, 'expenses'));
+
+      await runTransaction(db, async (tx) => {
+        let currentBalance = targetAcc?.balance || 0;
+        if (accRef) {
+          const accSnap = await tx.get(accRef);
+          if (accSnap.exists()) {
+            currentBalance = Number(accSnap.data().balance) || 0;
+          }
         }
-      }
-      return docRef.id;
+
+        const delta = expense.type === 'دخل' ? (expense.amount || 0) : -(expense.amount || 0);
+        const newBalance = currentBalance + delta;
+
+        // Write expense
+        tx.set(newExpenseRef, {
+          ...expense,
+          userId: user.uid,
+          referenceId: refId
+        });
+
+        // Write account balance
+        if (accRef) {
+          tx.update(accRef, { balance: newBalance });
+        }
+      });
+
+      return newExpenseRef.id;
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'expenses');
+      handleFirestoreError(e, OperationType.WRITE, 'expenses');
     }
   };
 
+  /**
+   * Delete Expense or Income + revert account balance atomically
+   */
   const deleteTransaction = async (id: string) => {
     if (!user) return;
     try {
-      const expense = expenses.find(e => e.id === id);
-      if (expense && expense.amount) {
-        const acc = findAccountByMethod(expense.paymentMethod);
-        if (acc && acc.id) {
-          // Revert the balance change: if it was income, subtract; if expense, add back.
-          const delta = expense.type === 'دخل' ? -expense.amount : expense.amount;
-          await updateDoc(doc(db, 'accounts', acc.id), {
-            balance: increment(delta)
-          });
+      const expenseRef = doc(db, 'expenses', id);
+
+      await runTransaction(db, async (tx) => {
+        const expenseSnap = await tx.get(expenseRef);
+        if (!expenseSnap.exists()) return;
+
+        const expenseData = expenseSnap.data() as Expense;
+        const targetAcc = findAccountByMethod(expenseData.paymentMethod);
+        const accRef = targetAcc?.id ? doc(db, 'accounts', targetAcc.id) : null;
+
+        let currentBalance = 0;
+        if (accRef) {
+          const accSnap = await tx.get(accRef);
+          if (accSnap.exists()) {
+            currentBalance = Number(accSnap.data().balance) || 0;
+          }
         }
-      }
-      await deleteDoc(doc(db, 'expenses', id));
+
+        // Revert delta: if was income, subtract; if was expense, add back
+        const delta = expenseData.type === 'دخل' ? -(expenseData.amount || 0) : (expenseData.amount || 0);
+        const newBalance = currentBalance + delta;
+
+        tx.delete(expenseRef);
+        if (accRef) {
+          tx.update(accRef, { balance: newBalance });
+        }
+      });
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, 'expenses');
     }
+  };
+
+  /**
+   * Update Expense + adjust account balance delta atomically
+   */
+  const updateExpenseTransactional = async (id: string, updatedData: Partial<Expense>) => {
+    if (!user) return;
+    try {
+      const expenseRef = doc(db, 'expenses', id);
+
+      await runTransaction(db, async (tx) => {
+        const expenseSnap = await tx.get(expenseRef);
+        if (!expenseSnap.exists()) return;
+
+        const oldData = expenseSnap.data() as Expense;
+        const oldAmount = oldData.amount || 0;
+        const newAmount = updatedData.amount !== undefined ? updatedData.amount : oldAmount;
+        const oldType = oldData.type || 'مصروف';
+        const newType = updatedData.type || oldType;
+        const oldMethod = oldData.paymentMethod;
+        const newMethod = updatedData.paymentMethod || oldMethod;
+
+        const oldAcc = findAccountByMethod(oldMethod);
+        const newAcc = findAccountByMethod(newMethod);
+
+        // Reads
+        let oldAccBalance = 0;
+        let newAccBalance = 0;
+        const oldAccRef = oldAcc?.id ? doc(db, 'accounts', oldAcc.id) : null;
+        const newAccRef = newAcc?.id ? doc(db, 'accounts', newAcc.id) : null;
+
+        if (oldAccRef) {
+          const snap = await tx.get(oldAccRef);
+          if (snap.exists()) oldAccBalance = Number(snap.data().balance) || 0;
+        }
+
+        if (newAccRef && newAccRef.id !== oldAccRef?.id) {
+          const snap = await tx.get(newAccRef);
+          if (snap.exists()) newAccBalance = Number(snap.data().balance) || 0;
+        } else if (newAccRef && newAccRef.id === oldAccRef?.id) {
+          newAccBalance = oldAccBalance;
+        }
+
+        // Calculate balance adjustments
+        if (oldAccRef?.id === newAccRef?.id && oldAccRef) {
+          // Same account
+          const oldDelta = oldType === 'دخل' ? oldAmount : -oldAmount;
+          const newDelta = newType === 'دخل' ? newAmount : -newAmount;
+          const netChange = newDelta - oldDelta;
+          tx.update(oldAccRef, { balance: oldAccBalance + netChange });
+        } else {
+          // Different accounts: revert old, apply new
+          if (oldAccRef) {
+            const revertDelta = oldType === 'دخل' ? -oldAmount : oldAmount;
+            tx.update(oldAccRef, { balance: oldAccBalance + revertDelta });
+          }
+          if (newAccRef) {
+            const applyDelta = newType === 'دخل' ? newAmount : -newAmount;
+            tx.update(newAccRef, { balance: newAccBalance + applyDelta });
+          }
+        }
+
+        tx.update(expenseRef, { ...updatedData });
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'expenses');
+    }
+  };
+
+  /**
+   * Transfer Funds between two accounts atomically
+   */
+  const transferFunds = async (fromAccName: string, toAccName: string, amount: number, notes?: string) => {
+    if (!user || amount <= 0) return;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const fromAcc = accounts.find(a => a.name === fromAccName);
+      const toAcc = accounts.find(a => a.name === toAccName);
+
+      if (!fromAcc?.id || !toAcc?.id) {
+        throw new Error('الحسابات المحددة غير موجودة.');
+      }
+
+      const fromAccRef = doc(db, 'accounts', fromAcc.id);
+      const toAccRef = doc(db, 'accounts', toAcc.id);
+      const newTxRef = doc(collection(db, 'transactions'));
+      const refId = generateReferenceId('trf');
+
+      await runTransaction(db, async (tx) => {
+        const fromSnap = await tx.get(fromAccRef);
+        const toSnap = await tx.get(toAccRef);
+
+        if (!fromSnap.exists() || !toSnap.exists()) {
+          throw new Error('أحد الحسابات غير متوفر في قاعدة البيانات.');
+        }
+
+        const fromBalance = Number(fromSnap.data().balance) || 0;
+        const toBalance = Number(toSnap.data().balance) || 0;
+
+        tx.update(fromAccRef, { balance: fromBalance - amount });
+        tx.update(toAccRef, { balance: toBalance + amount });
+
+        tx.set(newTxRef, {
+          userId: user.uid,
+          fromAccount: fromAccName,
+          toAccount: toAccName,
+          amount,
+          date: today,
+          notes: notes || 'تحويل بين الحسابات',
+          referenceId: refId
+        });
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'transactions');
+    }
+  };
+
+  const addTransferTransactional = async (transfer: { fromAccount: string; toAccount: string; amount: number; date?: string; notes?: string }) => {
+    return transferFunds(transfer.fromAccount, transfer.toAccount, transfer.amount, transfer.notes);
+  };
+
+  /**
+   * Delete Transfer and reverse balances atomically
+   */
+  const deleteTransferTransactional = async (txId: string) => {
+    if (!user) return;
+    try {
+      const txRef = doc(db, 'transactions', txId);
+      await runTransaction(db, async (tx) => {
+        const txSnap = await tx.get(txRef);
+        if (!txSnap.exists()) return;
+        const txData = txSnap.data() as Transaction;
+        const fromAcc = accounts.find(a => a.name === txData.fromAccount);
+        const toAcc = accounts.find(a => a.name === txData.toAccount);
+        if (fromAcc?.id && toAcc?.id) {
+          const fromRef = doc(db, 'accounts', fromAcc.id);
+          const toRef = doc(db, 'accounts', toAcc.id);
+          const fromSnap = await tx.get(fromRef);
+          const toSnap = await tx.get(toRef);
+          if (fromSnap.exists() && toSnap.exists()) {
+            const fromBal = Number(fromSnap.data().balance) || 0;
+            const toBal = Number(toSnap.data().balance) || 0;
+            tx.update(fromRef, { balance: fromBal + (txData.amount || 0) });
+            tx.update(toRef, { balance: toBal - (txData.amount || 0) });
+          }
+        }
+        tx.delete(txRef);
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'transactions');
+    }
+  };
+
+  /**
+   * Pay Debt partially/fully + deduct from debt fund atomically
+   */
+  const payDebtPart = async (debtId: string, amountPaid: number) => {
+    if (!user || amountPaid <= 0) return;
+    try {
+      const debtRef = doc(db, 'debts', debtId);
+      const debtFund = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
+      const debtFundRef = debtFund?.id ? doc(db, 'accounts', debtFund.id) : null;
+      const newTxRef = doc(collection(db, 'transactions'));
+
+      await runTransaction(db, async (tx) => {
+        const debtSnap = await tx.get(debtRef);
+        if (!debtSnap.exists()) return;
+
+        const debtData = debtSnap.data() as DebtItem;
+        const currentPaid = debtData.paidAmount || 0;
+        const newPaid = Math.min(debtData.totalAmount, currentPaid + amountPaid);
+        const newStatus = newPaid >= debtData.totalAmount ? 'تم' : 'قيد الانتظار';
+
+        let fundBalance = 0;
+        if (debtFundRef) {
+          const fundSnap = await tx.get(debtFundRef);
+          if (fundSnap.exists()) {
+            fundBalance = Number(fundSnap.data().balance) || 0;
+          }
+        }
+
+        // Updates
+        tx.update(debtRef, {
+          paidAmount: newPaid,
+          status: newStatus
+        });
+
+        if (debtFundRef) {
+          tx.update(debtFundRef, {
+            balance: Math.max(0, fundBalance - amountPaid)
+          });
+        }
+
+        tx.set(newTxRef, {
+          userId: user.uid,
+          fromAccount: debtFund?.name || 'صندوق سداد الديون',
+          toAccount: `سداد دين: ${debtData.name}`,
+          amount: amountPaid,
+          date: new Date().toISOString().split('T')[0],
+          notes: 'تسجيل سداد من صندوق الديون',
+          referenceId: generateReferenceId('debt_pay')
+        });
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'debts');
+    }
+  };
+
+  /**
+   * Atomic Salary Distribution:
+   * Increments Main Bank Account with operationalAmount,
+   * Increments dedicated funds with their allocations,
+   * Logs income and transfer entries atomically.
+   */
+  const distributeSalaryTransactional = async (
+    salaryAmount: number,
+    allocations: {
+      debtAmount: number;
+      debtPct: number;
+      emergencyAmount: number;
+      emergencyPct: number;
+      savingsAmount: number;
+      savingsPct: number;
+      operationalAmount: number;
+      operationalPct: number;
+    },
+    monthStr: string,
+    monthArabic: string
+  ) => {
+    if (!user || salaryAmount <= 0) return;
+    const today = new Date().toISOString().split('T')[0];
+    const salaryRefId = `salary_${user.uid}_${monthStr}`;
+
+    // Target accounts
+    const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
+    const debtAcc = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
+    const emgAcc = accounts.find(a => a.name === 'صندوق الطوارئ' || a.name.includes('الطوارئ'));
+    const savAcc = accounts.find(a => a.name === 'صندوق الادخار والاستثمار' || a.name.includes('الادخار'));
+
+    await runTransaction(db, async (tx) => {
+      // 1. All Reads First
+      let mainBalance = 0;
+      let debtBalance = 0;
+      let emgBalance = 0;
+      let savBalance = 0;
+
+      const mainRef = mainAcc?.id ? doc(db, 'accounts', mainAcc.id) : doc(collection(db, 'accounts'));
+      const debtRef = debtAcc?.id ? doc(db, 'accounts', debtAcc.id) : doc(collection(db, 'accounts'));
+      const emgRef = emgAcc?.id ? doc(db, 'accounts', emgAcc.id) : doc(collection(db, 'accounts'));
+      const savRef = savAcc?.id ? doc(db, 'accounts', savAcc.id) : doc(collection(db, 'accounts'));
+
+      if (mainAcc?.id) {
+        const s = await tx.get(mainRef);
+        if (s.exists()) mainBalance = Number(s.data().balance) || 0;
+      }
+      if (debtAcc?.id) {
+        const s = await tx.get(debtRef);
+        if (s.exists()) debtBalance = Number(s.data().balance) || 0;
+      }
+      if (emgAcc?.id) {
+        const s = await tx.get(emgRef);
+        if (s.exists()) emgBalance = Number(s.data().balance) || 0;
+      }
+      if (savAcc?.id) {
+        const s = await tx.get(savRef);
+        if (s.exists()) savBalance = Number(s.data().balance) || 0;
+      }
+
+      // 2. Writes
+      // Income entry
+      const incomeExpenseRef = doc(collection(db, 'expenses'));
+      tx.set(incomeExpenseRef, {
+        userId: user.uid,
+        type: 'دخل',
+        date: today,
+        category: 'الراتب',
+        description: `إيداع وتوزيع راتب ${monthArabic} تلقائياً`,
+        amount: salaryAmount,
+        paymentMethod: 'الحساب البنكي الرئيسي',
+        referenceId: salaryRefId
+      });
+
+      // Update Main Bank Account (+ operationalAmount)
+      if (mainAcc?.id) {
+        tx.update(mainRef, { balance: mainBalance + allocations.operationalAmount });
+      } else {
+        tx.set(mainRef, {
+          userId: user.uid,
+          name: 'الحساب البنكي الرئيسي',
+          type: 'الحساب البنكي',
+          balance: allocations.operationalAmount,
+          currency: 'ريال سعودي',
+          isArchived: false,
+          notes: 'حساب الراتب والمصاريف المعيشية'
+        });
+      }
+
+      // Update Debt Fund (+ debtAmount)
+      if (debtAcc?.id) {
+        tx.update(debtRef, { balance: debtBalance + allocations.debtAmount });
+      } else {
+        tx.set(debtRef, {
+          userId: user.uid,
+          name: 'صندوق سداد الديون',
+          type: 'صندوق مخصص',
+          balance: allocations.debtAmount,
+          currency: 'ريال سعودي',
+          isArchived: false,
+          notes: 'مخصص سداد الديون'
+        });
+      }
+
+      // Update Emergency Fund (+ emergencyAmount)
+      if (emgAcc?.id) {
+        tx.update(emgRef, { balance: emgBalance + allocations.emergencyAmount });
+      } else {
+        tx.set(emgRef, {
+          userId: user.uid,
+          name: 'صندوق الطوارئ',
+          type: 'صندوق مخصص',
+          balance: allocations.emergencyAmount,
+          currency: 'ريال سعودي',
+          isArchived: false,
+          notes: 'مخصص الطوارئ'
+        });
+      }
+
+      // Update Savings Fund (+ savingsAmount)
+      if (savAcc?.id) {
+        tx.update(savRef, { balance: savBalance + allocations.savingsAmount });
+      } else {
+        tx.set(savRef, {
+          userId: user.uid,
+          name: 'صندوق الادخار والاستثمار',
+          type: 'صندوق مخصص',
+          balance: allocations.savingsAmount,
+          currency: 'ريال سعودي',
+          isArchived: false,
+          notes: 'مخصص الادخار والاستثمار'
+        });
+      }
+
+      // Internal transfer logs
+      const internalTransfers = [
+        { to: 'صندوق سداد الديون', amt: allocations.debtAmount, pct: allocations.debtPct },
+        { to: 'صندوق الطوارئ', amt: allocations.emergencyAmount, pct: allocations.emergencyPct },
+        { to: 'صندوق الادخار والاستثمار', amt: allocations.savingsAmount, pct: allocations.savingsPct }
+      ].filter(item => item.amt > 0);
+
+      for (const item of internalTransfers) {
+        const newTrRef = doc(collection(db, 'transactions'));
+        tx.set(newTrRef, {
+          userId: user.uid,
+          fromAccount: 'الحساب البنكي الرئيسي',
+          toAccount: item.to,
+          amount: item.amt,
+          date: today,
+          notes: `تخصيص تلقائي لراتب ${monthArabic} بنسبة ${item.pct}%`,
+          referenceId: salaryRefId
+        });
+      }
+    });
+  };
+
+  /**
+   * Atomic Reversal of Monthly Salary Distribution:
+   * Reverses only the exact amounts added in that specific month without wiping accounts!
+   */
+  const cancelSalaryDistributionTransactional = async (monthStr: string) => {
+    if (!user) return;
+    const salaryRefId = `salary_${user.uid}_${monthStr}`;
+
+    // Query salary expenses and transactions for this month
+    const expQ = query(
+      collection(db, 'expenses'),
+      where('userId', '==', user.uid),
+      where('category', '==', 'الراتب')
+    );
+    const transQ = query(
+      collection(db, 'transactions'),
+      where('userId', '==', user.uid)
+    );
+
+    const [expSnap, transSnap] = await Promise.all([getDocs(expQ), getDocs(transQ)]);
+
+    const targetExpenses = expSnap.docs.filter(d => {
+      const data = d.data() as Expense;
+      return data.referenceId === salaryRefId || (data.date && data.date.startsWith(monthStr));
+    });
+
+    const targetTrans = transSnap.docs.filter(d => {
+      const data = d.data() as Transaction;
+      return data.referenceId === salaryRefId || (
+        data.date && data.date.startsWith(monthStr) &&
+        data.fromAccount === 'الحساب البنكي الرئيسي' &&
+        (data.notes?.includes('تخصيص تلقائي') || data.notes?.includes('راتب'))
+      );
+    });
+
+    const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
+    const debtAcc = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
+    const emgAcc = accounts.find(a => a.name === 'صندوق الطوارئ' || a.name.includes('الطوارئ'));
+    const savAcc = accounts.find(a => a.name === 'صندوق الادخار والاستثمار' || a.name.includes('الادخار'));
+
+    await runTransaction(db, async (tx) => {
+      // 1. Reads
+      let mainBalance = 0;
+      let debtBalance = 0;
+      let emgBalance = 0;
+      let savBalance = 0;
+
+      const mainRef = mainAcc?.id ? doc(db, 'accounts', mainAcc.id) : null;
+      const debtRef = debtAcc?.id ? doc(db, 'accounts', debtAcc.id) : null;
+      const emgRef = emgAcc?.id ? doc(db, 'accounts', emgAcc.id) : null;
+      const savRef = savAcc?.id ? doc(db, 'accounts', savAcc.id) : null;
+
+      if (mainRef) {
+        const s = await tx.get(mainRef);
+        if (s.exists()) mainBalance = Number(s.data().balance) || 0;
+      }
+      if (debtRef) {
+        const s = await tx.get(debtRef);
+        if (s.exists()) debtBalance = Number(s.data().balance) || 0;
+      }
+      if (emgRef) {
+        const s = await tx.get(emgRef);
+        if (s.exists()) emgBalance = Number(s.data().balance) || 0;
+      }
+      if (savRef) {
+        const s = await tx.get(savRef);
+        if (s.exists()) savBalance = Number(s.data().balance) || 0;
+      }
+
+      // Calculate deduction amounts from target transfers
+      let debtToDeduct = 0;
+      let emgToDeduct = 0;
+      let savToDeduct = 0;
+
+      for (const tDoc of targetTrans) {
+        const t = tDoc.data() as Transaction;
+        if (t.toAccount.includes('الديون')) debtToDeduct += t.amount || 0;
+        if (t.toAccount.includes('طوارئ') || t.toAccount.includes('الطوارئ')) emgToDeduct += t.amount || 0;
+        if (t.toAccount.includes('الادخار') || t.toAccount.includes('استثمار')) savToDeduct += t.amount || 0;
+      }
+
+      const totalSalaryAmount = targetExpenses.reduce((sum, e) => sum + ((e.data() as Expense).amount || 0), 0);
+      const operationalToDeduct = Math.max(0, totalSalaryAmount - (debtToDeduct + emgToDeduct + savToDeduct));
+
+      // 2. Writes
+      if (mainRef) {
+        tx.update(mainRef, { balance: Math.max(0, mainBalance - operationalToDeduct) });
+      }
+      if (debtRef && debtToDeduct > 0) {
+        tx.update(debtRef, { balance: Math.max(0, debtBalance - debtToDeduct) });
+      }
+      if (emgRef && emgToDeduct > 0) {
+        tx.update(emgRef, { balance: Math.max(0, emgBalance - emgToDeduct) });
+      }
+      if (savRef && savToDeduct > 0) {
+        tx.update(savRef, { balance: Math.max(0, savBalance - savToDeduct) });
+      }
+
+      // Delete target documents
+      for (const eDoc of targetExpenses) {
+        tx.delete(doc(db, 'expenses', eDoc.id));
+      }
+      for (const tDoc of targetTrans) {
+        tx.delete(doc(db, 'transactions', tDoc.id));
+      }
+    });
   };
 
   const addAccountItem = async (acc: Omit<AccountItem, 'id' | 'userId'>) => {
@@ -603,55 +857,6 @@ export function useFinanceData() {
     }
   };
 
-  const payDebtPart = async (debtId: string, amountPaid: number) => {
-    if (!user) return;
-    try {
-      const debt = debts.find(d => d.id === debtId);
-      if (debt) {
-        const newPaid = (debt.paidAmount || 0) + amountPaid;
-        const isDone = newPaid >= debt.totalAmount;
-        await updateDoc(doc(db, 'debts', debtId), {
-          paidAmount: Math.min(debt.totalAmount, newPaid),
-          status: isDone ? 'تم' : 'قيد الانتظار'
-        });
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'debts');
-    }
-  };
-
-  const transferFunds = async (fromAccName: string, toAccName: string, amount: number, notes?: string) => {
-    if (!user || amount <= 0) return;
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      await addDoc(collection(db, 'transactions'), {
-        userId: user.uid,
-        fromAccount: fromAccName,
-        toAccount: toAccName,
-        amount,
-        date: today,
-        notes: notes || 'تحويل بين الحسابات'
-      });
-
-      const fromAcc = accounts.find(a => a.name === fromAccName);
-      const toAcc = accounts.find(a => a.name === toAccName);
-
-      if (fromAcc && fromAcc.id) {
-        await updateDoc(doc(db, 'accounts', fromAcc.id), {
-          balance: increment(-amount)
-        });
-      }
-
-      if (toAcc && toAcc.id) {
-        await updateDoc(doc(db, 'accounts', toAcc.id), {
-          balance: increment(amount)
-        });
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'transactions');
-    }
-  };
-
   const updateSettingsSalary = async (newSalary: number) => {
     if (!user) return;
     try {
@@ -685,6 +890,9 @@ export function useFinanceData() {
     // Actions
     addTransaction,
     deleteTransaction,
+    updateExpenseTransactional,
+    addTransferTransactional,
+    deleteTransferTransactional,
     addAccountItem,
     addBillItem,
     toggleBillStatus,
@@ -693,6 +901,8 @@ export function useFinanceData() {
     addDebtItem,
     payDebtPart,
     transferFunds,
-    updateSettingsSalary
+    updateSettingsSalary,
+    distributeSalaryTransactional,
+    cancelSalaryDistributionTransactional
   };
 }

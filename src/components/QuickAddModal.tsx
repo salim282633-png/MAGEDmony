@@ -20,6 +20,7 @@ interface QuickAddModalProps {
 export function QuickAddModal({ isOpen, onClose, initialType = 'income' }: QuickAddModalProps) {
   const { 
     addTransaction, 
+    distributeSalaryTransactional,
     accounts,
     expenses,
     transactions = [],
@@ -168,83 +169,21 @@ export function QuickAddModal({ isOpen, onClose, initialType = 'income' }: Quick
         const operationalAmount = salaryAmount - debtAmount - emergencyAmount - savingsAmount;
         const operationalPct = Math.round((operationalAmount / salaryAmount) * 100);
 
-        // 1. Record Income Transaction
-        await addDoc(collection(db, 'expenses'), {
-          userId: auth.currentUser.uid,
-          type: 'دخل',
-          date: today,
-          category: 'الراتب',
-          description: `إيداع وتوزيع راتب ${currentMonthArabic} تلقائياً`,
-          amount: salaryAmount,
-          paymentMethod: 'الحساب البنكي الرئيسي'
-        });
-
-        // 2. Helper to get or update account
-        const getOrCreateAccount = async (accName: string, defaultType: string, setBalanceAmount: number, notesStr: string) => {
-          let acc = accounts.find(a => a.name === accName || a.name.includes(accName));
-          if (acc && acc.id) {
-            await updateDoc(doc(db, 'accounts', acc.id), { 
-              balance: accName === 'الحساب البنكي الرئيسي' ? setBalanceAmount : increment(setBalanceAmount),
-              notes: notesStr
-            });
-            return acc.id;
-          } else {
-            const newRef = await addDoc(collection(db, 'accounts'), {
-              userId: auth.currentUser!.uid,
-              name: accName,
-              type: defaultType,
-              balance: setBalanceAmount,
-              currency: 'ريال سعودي',
-              isArchived: false,
-              notes: notesStr
-            });
-            return newRef.id;
-          }
-        };
-
-        // Clean up any old "صندوق المصاريف الأساسية" account to keep database pristine and align with the updated architecture
-        const oldAcc = accounts.find(a => a.name === 'صندوق المصاريف الأساسية');
-        if (oldAcc && oldAcc.id) {
-          await deleteDoc(doc(db, 'accounts', oldAcc.id));
-        }
-
-        // Update main bank account with the leftover operational balance (الصافي المتاح للمصاريف المعيشية)
-        await getOrCreateAccount('الحساب البنكي الرئيسي', 'الحساب البنكي', operationalAmount, 'حساب الراتب والمصاريف المعيشية (الصافي المتاح بعد الاقتطاعات)');
-        await getOrCreateAccount('صندوق سداد الديون', 'صندوق مخصص', debtAmount, 'مخصص سداد الديون (26%)');
-        await getOrCreateAccount('صندوق الطوارئ', 'صندوق مخصص', emergencyAmount, 'مخصص الطوارئ (16%)');
-        await getOrCreateAccount('صندوق الادخار والاستثمار', 'صندوق مخصص', savingsAmount, 'مخصص الادخار والاستثمار (12%)');
-
-        // Log internal accounting transactions (Movements from main to the 3 dedication safes)
-        const allocations = [
-          { name: 'صندوق سداد الديون', amt: debtAmount, pct: debtPct },
-          { name: 'صندوق الطوارئ', amt: emergencyAmount, pct: emergencyPct },
-          { name: 'صندوق الادخار والاستثمار', amt: savingsAmount, pct: savingsPct }
-        ].filter(item => item.amt > 0);
-
-        for (const item of allocations) {
-          await addDoc(collection(db, 'transactions'), {
-            userId: auth.currentUser!.uid,
-            fromAccount: 'الحساب البنكي الرئيسي',
-            toAccount: item.name,
-            amount: item.amt,
-            date: today,
-            notes: `تخصيص تلقائي لراتب ${currentMonthArabic} بنسبة ${item.pct}%`
-          });
-        }
-
-        // --- Mandatory Accounting Verification Check ---
-        const sumAllocations = operationalAmount + debtAmount + emergencyAmount + savingsAmount;
-        const diffAllocations = Math.abs(sumAllocations - salaryAmount);
-        const transferAmountsTotal = debtAmount + emergencyAmount + savingsAmount;
-        const sumTransfers = transferAmountsTotal + operationalAmount;
-        const diffTransfers = Math.abs(sumTransfers - sumAllocations);
-        const sumAddedToAccounts = operationalAmount + debtAmount + emergencyAmount + savingsAmount;
-        const diffAccounts = Math.abs(sumAddedToAccounts - sumTransfers);
-
-        if (diffAllocations >= 0.01 || diffTransfers >= 0.01 || diffAccounts >= 0.01) {
-          const maxDiff = Math.max(diffAllocations, diffTransfers, diffAccounts);
-          throw new Error(`خطأ في التحقق المحاسبي الإجباري: ظهر فرق قدره (${maxDiff.toFixed(2)} ريال). التوزيع غير مطابق لصافي الراتب (${salaryAmount} ريال). تم إيقاف التوزيع.`);
-        }
+        await distributeSalaryTransactional(
+          salaryAmount,
+          {
+            debtAmount,
+            debtPct,
+            emergencyAmount,
+            emergencyPct,
+            savingsAmount,
+            savingsPct,
+            operationalAmount,
+            operationalPct
+          },
+          currentMonthStr,
+          currentMonthArabic
+        );
 
         setSuccessMsg(`✅ تم استلام وتوزيع راتب ${currentMonthArabic} تلقائياً بنسبة 100%!`);
         setAmount('');
