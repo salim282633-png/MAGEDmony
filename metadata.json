@@ -1,0 +1,6 @@
+{
+  "name": "الخبير المالي الشخصي",
+  "description": "تطبيق مالي بسيط لإدارة الدخل، المصروفات، الفواتير، والديون بإجابة السؤال الأساسي: كم أستطيع أن أصرف الآن؟",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

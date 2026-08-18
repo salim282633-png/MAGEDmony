@@ -1,0 +1,240 @@
+{
+  "entities": {
+    "BudgetItem": {
+      "title": "Budget Item",
+      "description": "A single item in the monthly budget",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "month": { "type": "string", "description": "YYYY-MM format" },
+        "name": { "type": "string", "maxLength": 100 },
+        "planned": { "type": "number" },
+        "actual": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["userId", "month", "name", "planned", "actual"]
+    },
+    "DebtItem": {
+      "title": "Debt Item",
+      "description": "Tracking for a specific debt",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["تم", "متأخر", "قيد الانتظار"] },
+        "dueDate": { "type": "string", "format": "date" }
+      },
+      "required": ["userId", "name", "totalAmount", "paidAmount", "status"]
+    },
+    "SavingsRecord": {
+      "title": "Savings Record",
+      "description": "Monthly record for savings and emergency fund",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "month": { "type": "string" },
+        "savingsPlanned": { "type": "number" },
+        "savingsActual": { "type": "number" },
+        "emergencyPlanned": { "type": "number" },
+        "emergencyActual": { "type": "number" }
+      },
+      "required": ["userId", "month", "savingsPlanned", "savingsActual", "emergencyPlanned", "emergencyActual"]
+    },
+    "Expense": {
+      "title": "Daily Expense or Income",
+      "description": "A single expense or income log",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["دخل", "مصروف"] },
+        "date": { "type": "string", "format": "date" },
+        "category": { "type": "string" },
+        "description": { "type": "string", "maxLength": 200 },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "attachmentUrl": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "location": { "type": "string" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["userId", "date", "category", "amount"]
+    },
+    "Task": {
+      "title": "Monthly Task",
+      "description": "A financial task or goal for the month",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "date": { "type": "string", "format": "date" },
+        "deadline": { "type": "string", "format": "date" },
+        "priority": { "type": "string", "enum": ["عالية", "متوسطة", "منخفضة"] },
+        "status": { "type": "string", "enum": ["لم يبدأ", "جاري التنفيذ", "مكتمل", "مؤجل"] },
+        "completion": { "type": "number", "minimum": 0, "maximum": 100 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["userId", "title", "status", "priority"]
+    },
+    "UserSettings": {
+      "title": "User Settings",
+      "description": "Global settings for the user like monthly salary",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "salary": { "type": "number" },
+        "currency": { "type": "string", "default": "ريال" }
+      },
+      "required": ["userId", "salary"]
+    },
+    "FinancialGoal": {
+      "title": "Financial Goal",
+      "description": "Long term financial target",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "targetAmount": { "type": "number" },
+        "currentAmount": { "type": "number" },
+        "deadline": { "type": "string" },
+        "status": { "type": "string", "enum": ["لم يبدأ", "جاري التنفيذ", "مكتمل"] }
+      },
+      "required": ["userId", "title", "targetAmount", "currentAmount", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A transfer between accounts",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "fromAccount": { "type": "string" },
+        "toAccount": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["userId", "fromAccount", "toAccount", "amount", "date"]
+    },
+    "AccountItem": {
+      "title": "Account Item",
+      "description": "Financial account (Cash, Bank, Wallet, Credit Card, Investment, Multi-currency)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "type": { "type": "string", "enum": ["نقد", "الحساب البنكي", "المحافظ الإلكترونية", "البطاقات الائتمانية", "المحافظ الاستثمارية", "حسابات العملات المختلفة"] },
+        "balance": { "type": "number" },
+        "currency": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "isArchived": { "type": "boolean" },
+        "notes": { "type": "string" }
+      },
+      "required": ["userId", "name", "type", "balance", "currency", "isArchived"]
+    },
+    "InvestmentItem": {
+      "title": "Investment Item",
+      "description": "Investment asset (Stocks, Funds, Crypto, Gold, Real Estate)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "type": { "type": "string", "enum": ["الأسهم", "الصناديق", "العملات الرقمية", "الذهب", "العقار"] },
+        "cost": { "type": "number" },
+        "currentValue": { "type": "number" },
+        "annualReturn": { "type": "number" },
+        "quantity": { "type": "number" },
+        "currency": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["userId", "name", "type", "cost", "currentValue", "annualReturn", "currency"]
+    },
+    "SubscriptionBill": {
+      "title": "Subscription or Bill",
+      "description": "Bills and subscriptions tracking (Electricity, Water, Internet, Phone, Netflix, ChatGPT, Insurance, Rent)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "enum": ["الكهرباء", "الماء", "الإنترنت", "الهاتف", "نتفليكس", "ChatGPT", "التأمين", "الإيجار", "اشتراك آخر"] },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "cycle": { "type": "string", "enum": ["شهري", "سنوي", "أسبوعي", "مرة واحدة"] },
+        "status": { "type": "string", "enum": ["مدفوع", "غير مدفوع", "مستحق قريباً"] },
+        "reminderDaysBefore": { "type": "number" },
+        "isReminderActive": { "type": "boolean" },
+        "paymentAccount": { "type": "string" },
+        "lastPaidDate": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["userId", "name", "category", "amount", "currency", "dueDate", "cycle", "status", "reminderDaysBefore", "isReminderActive"]
+    },
+    "FinancialEvent": {
+      "title": "Financial Event",
+      "description": "Calendar financial event",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "date": { "type": "string", "format": "date" },
+        "type": { "type": "string", "enum": ["راتب", "فاتورة", "قسط", "اشتراك", "حدث آخر"] },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["معلق", "مكتمل", "ملغى"] },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["userId", "title", "date", "type", "amount", "currency"]
+    }
+  },
+  "firestore": {
+    "budgets": {
+      "schema": "BudgetItem",
+      "description": "Monthly budget items"
+    },
+    "debts": {
+      "schema": "DebtItem",
+      "description": "Debt tracking records"
+    },
+    "savings": {
+      "schema": "SavingsRecord",
+      "description": "Savings and emergency fund records"
+    },
+    "expenses": {
+      "schema": "Expense",
+      "description": "Daily expense logs"
+    },
+    "tasks": {
+      "schema": "Task",
+      "description": "Financial tasks"
+    },
+    "settings": {
+      "schema": "UserSettings",
+      "description": "User specific settings"
+    },
+    "goals": {
+      "schema": "FinancialGoal",
+      "description": "Financial goals"
+    },
+    "transactions": {
+      "schema": "Transaction",
+      "description": "Fund transfers"
+    },
+    "accounts": {
+      "schema": "AccountItem",
+      "description": "Financial accounts"
+    },
+    "investments": {
+      "schema": "InvestmentItem",
+      "description": "Investment portfolio items"
+    },
+    "subscriptions": {
+      "schema": "SubscriptionBill",
+      "description": "Bills and subscription tracking records"
+    },
+    "financial_events": {
+      "schema": "FinancialEvent",
+      "description": "Custom financial events on calendar"
+    }
+  }
+}
