@@ -389,12 +389,17 @@ export function useFinanceData() {
   };
 
   /**
-   * Transfer Funds between two accounts atomically
+   * Transfer Funds between two accounts atomically with strict balance and identity validation
    */
-  const transferFunds = async (fromAccName: string, toAccName: string, amount: number, notes?: string) => {
-    if (!user || amount <= 0) return;
+  const transferFunds = async (fromAccName: string, toAccName: string, amount: number, notes?: string, date?: string) => {
+    if (!user || amount <= 0) {
+      throw new Error('يجب أن يكون مبلغ التحويل أكبر من الصفر.');
+    }
+    if (fromAccName === toAccName) {
+      throw new Error('لا يمكن التحويل من وإلى نفس الحساب.');
+    }
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = date || new Date().toISOString().split('T')[0];
       const fromAcc = accounts.find(a => a.name === fromAccName);
       const toAcc = accounts.find(a => a.name === toAccName);
 
@@ -408,6 +413,7 @@ export function useFinanceData() {
       const refId = generateReferenceId('trf');
 
       await runTransaction(db, async (tx) => {
+        // 1. All Reads First
         const fromSnap = await tx.get(fromAccRef);
         const toSnap = await tx.get(toAccRef);
 
@@ -418,6 +424,12 @@ export function useFinanceData() {
         const fromBalance = Number(fromSnap.data().balance) || 0;
         const toBalance = Number(toSnap.data().balance) || 0;
 
+        // Strict check: source balance must be sufficient
+        if (fromBalance < amount) {
+          throw new Error(`رصيد الحساب المصدر (${fromAccName}: ${fromBalance} ريال) غير كافٍ لتحويل ${amount} ريال.`);
+        }
+
+        // 2. Writes
         tx.update(fromAccRef, { balance: fromBalance - amount });
         tx.update(toAccRef, { balance: toBalance + amount });
 
@@ -433,42 +445,61 @@ export function useFinanceData() {
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, 'transactions');
+      throw e;
     }
   };
 
   const addTransferTransactional = async (transfer: { fromAccount: string; toAccount: string; amount: number; date?: string; notes?: string }) => {
-    return transferFunds(transfer.fromAccount, transfer.toAccount, transfer.amount, transfer.notes);
+    return transferFunds(transfer.fromAccount, transfer.toAccount, transfer.amount, transfer.notes, transfer.date);
   };
 
   /**
-   * Delete Transfer and reverse balances atomically
+   * Delete Transfer and reverse balances atomically with strict destination balance check
    */
   const deleteTransferTransactional = async (txId: string) => {
     if (!user) return;
     try {
       const txRef = doc(db, 'transactions', txId);
       await runTransaction(db, async (tx) => {
+        // 1. All Reads First
         const txSnap = await tx.get(txRef);
         if (!txSnap.exists()) return;
         const txData = txSnap.data() as Transaction;
+        const transferAmount = Number(txData.amount) || 0;
+        if (transferAmount <= 0) {
+          tx.delete(txRef);
+          return;
+        }
+
         const fromAcc = accounts.find(a => a.name === txData.fromAccount);
         const toAcc = accounts.find(a => a.name === txData.toAccount);
+
         if (fromAcc?.id && toAcc?.id) {
           const fromRef = doc(db, 'accounts', fromAcc.id);
           const toRef = doc(db, 'accounts', toAcc.id);
+
           const fromSnap = await tx.get(fromRef);
           const toSnap = await tx.get(toRef);
+
           if (fromSnap.exists() && toSnap.exists()) {
             const fromBal = Number(fromSnap.data().balance) || 0;
             const toBal = Number(toSnap.data().balance) || 0;
-            tx.update(fromRef, { balance: fromBal + (txData.amount || 0) });
-            tx.update(toRef, { balance: toBal - (txData.amount || 0) });
+
+            // Strict check: destination account must have at least transferAmount to reverse!
+            if (toBal < transferAmount) {
+              throw new Error(`لا يمكن حذف التحويل؛ لأن رصيد حساب الوجهة (${txData.toAccount}: ${toBal} ريال) أقل من مبلغ التحويل المطلوب عكسه (${transferAmount} ريال). قد يكون تم صرف المبلغ في عمليات لاحقة.`);
+            }
+
+            // 2. Writes
+            tx.update(fromRef, { balance: fromBal + transferAmount });
+            tx.update(toRef, { balance: toBal - transferAmount });
           }
         }
         tx.delete(txRef);
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, 'transactions');
+      throw e;
     }
   };
 
@@ -1254,7 +1285,8 @@ export function useFinanceData() {
   /**
    * Atomic Reversal of Monthly Salary Distribution:
    * Validates that funds still contain their respective allocations before allowing cancellation!
-   * Reverses only the exact amounts added without touching previous savings or masking deficits.
+   * Reverses strictly based on referenceId without touching previous savings or other transactions.
+   * All tx.get() calls are performed strictly before any tx.set(), tx.update(), or tx.delete()!
    */
   const cancelSalaryDistributionTransactional = async (monthStr: string) => {
     if (!user) return;
@@ -1262,32 +1294,22 @@ export function useFinanceData() {
     const distDocId = `${user.uid}_${monthStr}`;
     const distDocRef = doc(db, 'salary_distributions', distDocId);
 
-    // Query salary expenses and transactions for this month
+    // Query strictly matching salary expenses and transactions by referenceId
     const expQ = query(
       collection(db, 'expenses'),
       where('userId', '==', user.uid),
-      where('category', '==', 'الراتب')
+      where('referenceId', '==', salaryRefId)
     );
     const transQ = query(
       collection(db, 'transactions'),
-      where('userId', '==', user.uid)
+      where('userId', '==', user.uid),
+      where('referenceId', '==', salaryRefId)
     );
 
     const [expSnap, transSnap] = await Promise.all([getDocs(expQ), getDocs(transQ)]);
 
-    const targetExpenses = expSnap.docs.filter(d => {
-      const data = d.data() as Expense;
-      return data.referenceId === salaryRefId || (data.date && data.date.startsWith(monthStr));
-    });
-
-    const targetTrans = transSnap.docs.filter(d => {
-      const data = d.data() as Transaction;
-      return data.referenceId === salaryRefId || (
-        data.date && data.date.startsWith(monthStr) &&
-        data.fromAccount === 'الحساب البنكي الرئيسي' &&
-        (data.notes?.includes('تخصيص تلقائي') || data.notes?.includes('راتب'))
-      );
-    });
+    const targetExpenses = expSnap.docs;
+    const targetTrans = transSnap.docs;
 
     const mainAcc = accounts.find(a => a.name === 'الحساب البنكي الرئيسي' || a.type === 'الحساب البنكي');
     const debtAcc = accounts.find(a => a.name === 'صندوق سداد الديون' || a.name.includes('الديون'));
@@ -1295,7 +1317,9 @@ export function useFinanceData() {
     const savAcc = accounts.find(a => a.name === 'صندوق الادخار والاستثمار' || a.name.includes('الادخار'));
 
     await runTransaction(db, async (tx) => {
-      // 1. Reads
+      // 1. ALL READS FIRST (Strict Firestore rule: No reads after writes)
+      const distSnap = await tx.get(distDocRef);
+
       let mainBalance = 0;
       let debtBalance = 0;
       let emgBalance = 0;
@@ -1323,33 +1347,47 @@ export function useFinanceData() {
         if (s.exists()) savBalance = Number(s.data().balance) || 0;
       }
 
-      // Calculate deduction amounts from target transfers
+      // Check if there is anything to cancel
+      if (!distSnap.exists() && targetExpenses.length === 0 && targetTrans.length === 0) {
+        throw new Error(`لا يوجد توزيع راتب مسجل لشهر ${monthStr} لإلغائه.`);
+      }
+
+      // 2. Calculations based strictly on recorded distribution allocations or target documents
       let debtToDeduct = 0;
       let emgToDeduct = 0;
       let savToDeduct = 0;
+      let operationalToDeduct = 0;
 
-      for (const tDoc of targetTrans) {
-        const t = tDoc.data() as Transaction;
-        if (t.toAccount.includes('الديون')) debtToDeduct += t.amount || 0;
-        if (t.toAccount.includes('طوارئ') || t.toAccount.includes('الطوارئ')) emgToDeduct += t.amount || 0;
-        if (t.toAccount.includes('الادخار') || t.toAccount.includes('استثمار')) savToDeduct += t.amount || 0;
+      if (distSnap.exists()) {
+        const distData = distSnap.data();
+        const alloc = distData?.allocations || {};
+        debtToDeduct = Number(alloc.debtAmount) || 0;
+        emgToDeduct = Number(alloc.emergencyAmount) || 0;
+        savToDeduct = Number(alloc.savingsAmount) || 0;
+        operationalToDeduct = Number(alloc.operationalAmount) || 0;
+      } else {
+        for (const tDoc of targetTrans) {
+          const t = tDoc.data() as Transaction;
+          if (t.toAccount.includes('الديون')) debtToDeduct += t.amount || 0;
+          if (t.toAccount.includes('طوارئ') || t.toAccount.includes('الطوارئ')) emgToDeduct += t.amount || 0;
+          if (t.toAccount.includes('الادخار') || t.toAccount.includes('استثمار')) savToDeduct += t.amount || 0;
+        }
+        const totalSalaryAmount = targetExpenses.reduce((sum, e) => sum + ((e.data() as Expense).amount || 0), 0);
+        operationalToDeduct = Math.max(0, totalSalaryAmount - (debtToDeduct + emgToDeduct + savToDeduct));
       }
-
-      const totalSalaryAmount = targetExpenses.reduce((sum, e) => sum + ((e.data() as Expense).amount || 0), 0);
-      const operationalToDeduct = Math.max(0, totalSalaryAmount - (debtToDeduct + emgToDeduct + savToDeduct));
 
       // Strict Pre-Check: Do balances cover the reversal amounts?
       const insufficientFunds: string[] = [];
-      if (mainRef && mainBalance < operationalToDeduct) {
+      if (mainRef && operationalToDeduct > 0 && mainBalance < operationalToDeduct) {
         insufficientFunds.push(`الحساب البنكي (المطلوب عكسه: ${operationalToDeduct}، المتوفر: ${mainBalance})`);
       }
-      if (debtRef && debtBalance < debtToDeduct) {
+      if (debtRef && debtToDeduct > 0 && debtBalance < debtToDeduct) {
         insufficientFunds.push(`صندوق الديون (المطلوب عكسه: ${debtToDeduct}، المتوفر: ${debtBalance})`);
       }
-      if (emgRef && emgBalance < emgToDeduct) {
+      if (emgRef && emgToDeduct > 0 && emgBalance < emgToDeduct) {
         insufficientFunds.push(`صندوق الطوارئ (المطلوب عكسه: ${emgToDeduct}، المتوفر: ${emgBalance})`);
       }
-      if (savRef && savBalance < savToDeduct) {
+      if (savRef && savToDeduct > 0 && savBalance < savToDeduct) {
         insufficientFunds.push(`صندوق الادخار (المطلوب عكسه: ${savToDeduct}، المتوفر: ${savBalance})`);
       }
 
@@ -1357,8 +1395,8 @@ export function useFinanceData() {
         throw new Error(`لا يمكن إلغاء توزيع الراتب؛ لأن جزءاً من مخصصات هذا الشهر تم استهلاكه في عمليات لاحقة. النقص في: ${insufficientFunds.join('، ')}.`);
       }
 
-      // 2. Writes - deduct exact amounts without Math.max masking
-      if (mainRef) {
+      // 3. ALL WRITES AFTER ALL READS
+      if (mainRef && operationalToDeduct > 0) {
         tx.update(mainRef, { balance: mainBalance - operationalToDeduct });
       }
       if (debtRef && debtToDeduct > 0) {
@@ -1371,7 +1409,7 @@ export function useFinanceData() {
         tx.update(savRef, { balance: savBalance - savToDeduct });
       }
 
-      // Delete target documents
+      // Delete target documents strictly matching referenceId
       for (const eDoc of targetExpenses) {
         tx.delete(doc(db, 'expenses', eDoc.id));
       }
@@ -1379,8 +1417,7 @@ export function useFinanceData() {
         tx.delete(doc(db, 'transactions', tDoc.id));
       }
 
-      // Remove idempotency lock if exists
-      const distSnap = await tx.get(distDocRef);
+      // Remove idempotency lock document
       if (distSnap.exists()) {
         tx.delete(distDocRef);
       }

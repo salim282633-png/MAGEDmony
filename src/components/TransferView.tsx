@@ -38,26 +38,36 @@ export function TransferView({ transactions, accounts = [] }: TransferViewProps)
       return;
     }
     
-    await addTransferTransactional({
-      fromAccount: newItem.fromAccount,
-      toAccount: newItem.toAccount,
-      amount: newItem.amount,
-      date: newItem.date || new Date().toISOString().split('T')[0],
-      notes: newItem.notes || ''
-    });
+    try {
+      await addTransferTransactional({
+        fromAccount: newItem.fromAccount,
+        toAccount: newItem.toAccount,
+        amount: newItem.amount,
+        date: newItem.date || new Date().toISOString().split('T')[0],
+        notes: newItem.notes || ''
+      });
 
-    setNewItem({ 
-      fromAccount: '', 
-      toAccount: '', 
-      amount: 0, 
-      date: new Date().toISOString().split('T')[0], 
-      notes: '' 
-    });
-    setIsAdding(false);
+      setNewItem({ 
+        fromAccount: '', 
+        toAccount: '', 
+        amount: 0, 
+        date: new Date().toISOString().split('T')[0], 
+        notes: '' 
+      });
+      setIsAdding(false);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'حدث خطأ أثناء إجراء التحويل.');
+    }
   };
 
   const handleDelete = async (id: string) => {
-    await deleteTransferTransactional(id);
+    try {
+      await deleteTransferTransactional(id);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'حدث خطأ أثناء حذف التحويل واسترجاع الأرصدة.');
+    }
   };
 
   return (

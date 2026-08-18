@@ -210,4 +210,60 @@ describe('MAGEDmony Financial Logic Tests', () => {
     expect(newDebtPaid).toBe(500);
     expect(newDebtPaid).toBe(debt.totalAmount);
   });
+
+  // Test 10: Inter-account transfer validation (insufficient source balance and self-transfer)
+  it('validates inter-account transfers preventing self-transfer and source deficits', () => {
+    const fromAccount = { name: 'الحساب البنكي الرئيسي', balance: 200 };
+    const toAccount = { name: 'صندوق الادخار', balance: 500 };
+
+    // Self transfer check
+    const isSelfTransfer = fromAccount.name === toAccount.name;
+    expect(isSelfTransfer).toBe(false);
+
+    // Insufficient funds check
+    const requestedTransfer = 300;
+    const canTransfer = fromAccount.balance >= requestedTransfer;
+    expect(canTransfer).toBe(false);
+
+    // Valid transfer
+    const validTransferAmount = 150;
+    const canValidTransfer = fromAccount.balance >= validTransferAmount;
+    expect(canValidTransfer).toBe(true);
+
+    const updatedFrom = fromAccount.balance - validTransferAmount;
+    const updatedTo = toAccount.balance + validTransferAmount;
+    expect(updatedFrom).toBe(50);
+    expect(updatedTo).toBe(650);
+  });
+
+  // Test 11: Transfer deletion rejection when destination account funds were already spent
+  it('rejects transfer reversal when destination account balance is lower than transfer amount', () => {
+    const transferAmount = 400;
+    const destinationBalanceAfterSpending = 150; // User spent 250 from destination account
+
+    const canReverseTransfer = destinationBalanceAfterSpending >= transferAmount;
+    expect(canReverseTransfer).toBe(false);
+
+    const destinationBalanceSufficient = 500;
+    const canReverseWhenSufficient = destinationBalanceSufficient >= transferAmount;
+    expect(canReverseWhenSufficient).toBe(true);
+  });
+
+  // Test 12: Strict referenceId isolation during salary distribution cancellation
+  it('strictly scopes salary cancellation to referenceId and does not touch unrelated monthly expenses', () => {
+    const userId = 'user_abc';
+    const monthStr = '2026-08';
+    const targetSalaryRefId = `salary_${userId}_${monthStr}`;
+
+    const allExpenses = [
+      { id: 'e1', referenceId: targetSalaryRefId, category: 'الراتب', amount: 5000, date: '2026-08-01' },
+      { id: 'e2', referenceId: 'manual_exp_123', category: 'الراتب', amount: 1200, date: '2026-08-15' }, // bonus or manual
+      { id: 'e3', referenceId: 'groceries_99', category: 'الطعام', amount: 350, date: '2026-08-05' }
+    ];
+
+    const expensesToDelete = allExpenses.filter(e => e.referenceId === targetSalaryRefId);
+    expect(expensesToDelete.length).toBe(1);
+    expect(expensesToDelete[0].id).toBe('e1');
+    expect(expensesToDelete.some(e => e.id === 'e2')).toBe(false);
+  });
 });

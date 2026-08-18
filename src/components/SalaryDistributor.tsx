@@ -173,7 +173,7 @@ export function SalaryDistributor({ settings, accounts, expenses, transactions =
       setTimeout(() => setSuccessMsg(''), 7000);
     } catch (err) {
       console.error(err);
-      alert("حدث خطأ أثناء إلغاء التوزيع.");
+      alert(err instanceof Error ? err.message : "حدث خطأ أثناء إلغاء التوزيع.");
     } finally {
       setIsResetting(false);
     }
@@ -207,7 +207,7 @@ export function SalaryDistributor({ settings, accounts, expenses, transactions =
       setTimeout(() => setSuccessMsg(''), 7000);
     } catch (err) {
       console.error(err);
-      alert("حدث خطأ أثناء إعادة توزيع الراتب.");
+      alert(err instanceof Error ? err.message : "حدث خطأ أثناء إعادة توزيع الراتب.");
     } finally {
       setIsRedistributing(false);
     }
