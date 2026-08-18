@@ -8,6 +8,7 @@ import { BudgetItem, AccountItem, Transaction, Expense, UserSettings, DebtItem }
 import { useFinanceData } from '../lib/useFinanceData';
 import { CheckCircle2, Landmark, ArrowDownToLine, Loader2, CreditCard, ShieldAlert, PiggyBank, Home, Calculator, AlertCircle, X, RotateCcw } from 'lucide-react';
 import { formatCurrency } from '../lib/utils';
+import { calculateEmergencyTarget, calculateSmartSalaryAllocation } from '../lib/financialProjection';
 
 interface SalaryDistributorProps {
   settings: UserSettings | null;

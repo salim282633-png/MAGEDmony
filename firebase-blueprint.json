@@ -185,6 +185,38 @@
         "notes": { "type": "string", "maxLength": 500 }
       },
       "required": ["userId", "title", "date", "type", "amount", "currency"]
+    },
+    "MonthlyClosure": {
+      "title": "Monthly Closure",
+      "description": "Closing report for a financial month",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "month": { "type": "string" },
+        "closedAt": { "type": "string" },
+        "salary": { "type": "number" },
+        "totalIncome": { "type": "number" },
+        "livingBudget": { "type": "number" },
+        "actualExpenses": { "type": "number" },
+        "surplusOrDeficit": { "type": "number" },
+        "isDeficit": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["closed"] }
+      },
+      "required": ["userId", "month", "closedAt", "salary", "livingBudget", "actualExpenses", "surplusOrDeficit", "isDeficit", "status"]
+    },
+    "SalaryDistributionRecord": {
+      "title": "Salary Distribution Record",
+      "description": "Historical log of a salary allocation event",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "month": { "type": "string" },
+        "salaryAmount": { "type": "number" },
+        "allocations": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "referenceId": { "type": "string" }
+      },
+      "required": ["userId", "month", "salaryAmount", "allocations", "createdAt", "referenceId"]
     }
   },
   "firestore": {
@@ -235,6 +267,14 @@
     "financial_events": {
       "schema": "FinancialEvent",
       "description": "Custom financial events on calendar"
+    },
+    "monthly_closures": {
+      "schema": "MonthlyClosure",
+      "description": "Monthly closure records"
+    },
+    "salary_distributions": {
+      "schema": "SalaryDistributionRecord",
+      "description": "Salary distribution audit records"
     }
   }
 }

@@ -72,7 +72,8 @@ export default function App() {
     transactions, 
     accounts, 
     subscriptions,
-    monthlyClosures 
+    monthlyClosures,
+    salaryDistributions 
   } = financeData;
 
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
@@ -135,6 +136,7 @@ export default function App() {
             transactions={transactions} 
             debts={debts} 
             savings={savings} 
+            salaryDistributions={salaryDistributions}
           />
         );
       case 'expenses': 

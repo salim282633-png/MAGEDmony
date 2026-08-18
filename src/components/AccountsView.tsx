@@ -183,7 +183,7 @@ export function AccountsView({ accounts, transactions, expenses }: AccountsViewP
     setEditingAccount(null);
     setFormData({
       name: '',
-      type: 'الحساب البنكي',
+      type: 'المحافظ الإلكترونية',
       balance: 0,
       openingBalance: 0,
       openingDate: new Date().toISOString().split('T')[0],
@@ -191,7 +191,7 @@ export function AccountsView({ accounts, transactions, expenses }: AccountsViewP
       accountNumber: '',
       isArchived: false,
       notes: '',
-      icon: 'Landmark',
+      icon: 'Wallet',
       color: 'blue'
     });
     setIsModalOpen(true);
@@ -607,11 +607,13 @@ export function AccountsView({ accounts, transactions, expenses }: AccountsViewP
                     <select
                       required
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold"
-                      value={formData.type || 'الحساب البنكي'}
+                      value={formData.type || 'المحافظ الإلكترونية'}
                       onChange={e => setFormData({ ...formData, type: e.target.value as AccountType })}
                     >
+                      {formData.type === 'الحساب البنكي' && editingAccount && (
+                        <option value="الحساب البنكي">الحساب البنكي (رئيسي)</option>
+                      )}
                       <option value="نقد">نقد (كاش)</option>
-                      <option value="الحساب البنكي">الحساب البنكي</option>
                       <option value="المحافظ الإلكترونية">المحافظ الإلكترونية</option>
                       <option value="البطاقات الائتمانية">البطاقات الائتمانية</option>
                       <option value="المحافظ الاستثمارية">المحافظ الاستثمارية</option>

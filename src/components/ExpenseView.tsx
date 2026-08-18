@@ -32,7 +32,8 @@ import {
   Wallet,
   TrendingDown,
   TrendingUp,
-  Info
+  Info,
+  Receipt
 } from 'lucide-react';
 import { addDoc, collection, deleteDoc, doc, updateDoc, increment } from 'firebase/firestore';
 import { useFinanceData } from '../lib/useFinanceData';
@@ -631,132 +632,208 @@ export function ExpenseView({ expenses, accounts = [], settings = null, debts = 
 
       {/* Transactions Table */}
       <TableView
-        title="جدول المعاملات المالية"
+        title="جدول وسجل المعاملات المالية"
+        description="سجل شامل لجميع المصروفات والإيرادات المسجلة"
         headers={['نوع العملية', 'التاريخ', 'الوصف', 'الفئة', 'الحساب', 'المبلغ', 'الوسوم', 'إجراءات']}
-      >
-        {filteredList.length === 0 ? (
-          <tr>
-            <td colSpan={8} className="text-center py-12 text-slate-400 font-bold text-xs">
-              لا توجد معاملات مطابقة للبحث أو الفلترة المحددة.
-            </td>
-          </tr>
-        ) : (
-          filteredList.map((item) => {
-            const isIncome = item.type === 'دخل';
-            return (
-              <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
-                {/* Type */}
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={cn(
-                    "inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold border",
-                    isIncome 
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
-                      : "bg-rose-50 text-rose-700 border-rose-200"
-                  )}>
-                    {isIncome ? <ArrowDownLeft className="w-3.5 h-3.5" /> : <ArrowUpRight className="w-3.5 h-3.5" />}
-                    <span>{isIncome ? "دخل" : "مصروف"}</span>
-                  </span>
-                </td>
-
-                {/* Date */}
-                <td className="px-6 py-4 text-slate-500 text-xs font-bold whitespace-nowrap">
-                  {item.date}
-                </td>
-
-                {/* Description & Location */}
-                <td className="px-6 py-4">
-                  <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5 flex-wrap">
-                    <span>{item.description}</span>
-                    {isIncome && item.category !== 'الراتب' && item.extraIncomeAllocation && (
+        isEmpty={filteredList.length === 0}
+        emptyState={
+          <div className="py-12 text-center text-slate-400">
+            <Receipt className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+            <h4 className="text-sm font-bold text-slate-700">لا توجد معاملات مطابقة</h4>
+            <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+              جرب تغيير كلمات البحث أو الفلاتر، أو قم بتسجيل حركة جديدة.
+            </p>
+          </div>
+        }
+        mobileCards={
+          <div className="p-4 space-y-3">
+            {filteredList.map((item) => {
+              const isIncome = item.type === 'دخل';
+              return (
+                <div 
+                  key={item.id} 
+                  className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
                       <span className={cn(
-                        "text-[10px] px-2 py-0.5 rounded-full font-black border",
-                        item.extraIncomeAllocation === 'living' && "bg-emerald-50 text-emerald-700 border-emerald-200",
-                        item.extraIncomeAllocation === 'salary_split' && "bg-teal-50 text-teal-700 border-teal-200",
-                        item.extraIncomeAllocation === 'debt' && "bg-rose-50 text-rose-700 border-rose-200",
-                        item.extraIncomeAllocation === 'emergency' && "bg-purple-50 text-purple-700 border-purple-200",
-                        item.extraIncomeAllocation === 'savings' && "bg-blue-50 text-blue-700 border-blue-200",
-                        item.extraIncomeAllocation === 'unallocated' && "bg-amber-50 text-amber-700 border-amber-200"
+                        "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
+                        isIncome ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
                       )}>
-                        {item.extraIncomeAllocation === 'living' && '🛒 مخصص للمعيشة'}
-                        {item.extraIncomeAllocation === 'salary_split' && '⚖️ موزع بنسب الراتب'}
-                        {item.extraIncomeAllocation === 'debt' && '💳 سداد ديون'}
-                        {item.extraIncomeAllocation === 'emergency' && '🛡️ صندوق الطوارئ'}
-                        {item.extraIncomeAllocation === 'savings' && '📈 ادخار واستثمار'}
-                        {item.extraIncomeAllocation === 'unallocated' && '🏦 غير مخصص (بالبنك)'}
+                        {isIncome ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
                       </span>
-                    )}
-                  </div>
-                  {item.location && (
-                    <div className="flex items-center gap-1 text-[11px] text-slate-400 font-medium mt-0.5">
-                      <MapPin className="w-3 h-3 text-slate-400" />
-                      <span>{item.location}</span>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900 leading-tight">{item.description}</h4>
+                        <span className="text-[10px] text-slate-400 font-medium">{item.date} • {item.paymentMethod}</span>
+                      </div>
                     </div>
+
+                    <div className="text-left shrink-0">
+                      <span className={cn(
+                        "font-black text-sm dir-ltr block",
+                        isIncome ? "text-emerald-600" : "text-rose-600"
+                      )}>
+                        {isIncome ? `+${item.amount.toLocaleString()}` : `-${item.amount.toLocaleString()}`} ر.س
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-bold border border-slate-200 mt-0.5 inline-block">
+                        {item.category}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      {item.tags && item.tags.length > 0 ? (
+                        item.tags.map((tag, idx) => (
+                          <span key={idx} className="bg-slate-50 text-slate-500 px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-200">
+                            #{tag}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-slate-400 text-[10px]">بدون وسوم</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => openEditModal(item)}
+                        className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                        title="تعديل"
+                        aria-label="تعديل"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id!)}
+                        className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                        title="حذف"
+                        aria-label="حذف"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        }
+      >
+        {filteredList.map((item) => {
+          const isIncome = item.type === 'دخل';
+          return (
+            <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
+              {/* Type */}
+              <td className="px-6 py-4 whitespace-nowrap">
+                <span className={cn(
+                  "inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold border",
+                  isIncome 
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+                    : "bg-rose-50 text-rose-700 border-rose-200"
+                )}>
+                  {isIncome ? <ArrowDownLeft className="w-3.5 h-3.5" /> : <ArrowUpRight className="w-3.5 h-3.5" />}
+                  <span>{isIncome ? "دخل" : "مصروف"}</span>
+                </span>
+              </td>
+
+              {/* Date */}
+              <td className="px-6 py-4 text-slate-500 text-xs font-bold whitespace-nowrap">
+                {item.date}
+              </td>
+
+              {/* Description & Location */}
+              <td className="px-6 py-4">
+                <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5 flex-wrap">
+                  <span>{item.description}</span>
+                  {isIncome && item.category !== 'الراتب' && item.extraIncomeAllocation && (
+                    <span className={cn(
+                      "text-[10px] px-2 py-0.5 rounded-full font-black border",
+                      item.extraIncomeAllocation === 'living' && "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      item.extraIncomeAllocation === 'salary_split' && "bg-teal-50 text-teal-700 border-teal-200",
+                      item.extraIncomeAllocation === 'debt' && "bg-rose-50 text-rose-700 border-rose-200",
+                      item.extraIncomeAllocation === 'emergency' && "bg-purple-50 text-purple-700 border-purple-200",
+                      item.extraIncomeAllocation === 'savings' && "bg-blue-50 text-blue-700 border-blue-200",
+                      item.extraIncomeAllocation === 'unallocated' && "bg-amber-50 text-amber-700 border-amber-200"
+                    )}>
+                      {item.extraIncomeAllocation === 'living' && '🛒 مخصص للمعيشة'}
+                      {item.extraIncomeAllocation === 'salary_split' && '⚖️ موزع بنسب الراتب'}
+                      {item.extraIncomeAllocation === 'debt' && '💳 سداد ديون'}
+                      {item.extraIncomeAllocation === 'emergency' && '🛡️ صندوق الطوارئ'}
+                      {item.extraIncomeAllocation === 'savings' && '📈 ادخار واستثمار'}
+                      {item.extraIncomeAllocation === 'unallocated' && '🏦 غير مخصص (بالبنك)'}
+                    </span>
                   )}
-                </td>
-
-                {/* Category */}
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded-xl text-xs font-bold border border-slate-200">
-                    {item.category}
-                  </span>
-                </td>
-
-                {/* Account */}
-                <td className="px-6 py-4 text-slate-600 text-xs font-bold whitespace-nowrap">
-                  <div className="flex items-center gap-1.5">
-                    <Landmark className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{item.paymentMethod}</span>
+                </div>
+                {item.location && (
+                  <div className="flex items-center gap-1 text-[11px] text-slate-400 font-medium mt-0.5">
+                    <MapPin className="w-3 h-3 text-slate-400" />
+                    <span>{item.location}</span>
                   </div>
-                </td>
+                )}
+              </td>
 
-                {/* Amount */}
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={cn(
-                    "font-black text-sm dir-ltr block",
-                    isIncome ? "text-emerald-600" : "text-rose-600"
-                  )}>
-                    {isIncome ? `+${item.amount.toLocaleString('en-US')}` : `-${item.amount.toLocaleString('en-US')}`} ريال
-                  </span>
-                </td>
+              {/* Category */}
+              <td className="px-6 py-4 whitespace-nowrap">
+                <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded-xl text-xs font-bold border border-slate-200">
+                  {item.category}
+                </span>
+              </td>
 
-                {/* Tags */}
-                <td className="px-6 py-4">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {item.tags && item.tags.length > 0 ? (
-                      item.tags.map((tag, idx) => (
-                        <span key={idx} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-200">
-                          #{tag}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-slate-300 text-[11px]">-</span>
-                    )}
-                  </div>
-                </td>
+              {/* Account */}
+              <td className="px-6 py-4 text-slate-600 text-xs font-bold whitespace-nowrap">
+                <div className="flex items-center gap-1.5">
+                  <Landmark className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{item.paymentMethod}</span>
+                </div>
+              </td>
 
-                {/* Actions */}
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => openEditModal(item)}
-                      title="تعديل العملية"
-                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id!)}
-                      title="حذف العملية"
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            );
-          })
-        )}
+              {/* Amount */}
+              <td className="px-6 py-4 whitespace-nowrap">
+                <span className={cn(
+                  "font-black text-sm dir-ltr block",
+                  isIncome ? "text-emerald-600" : "text-rose-600"
+                )}>
+                  {isIncome ? `+${item.amount.toLocaleString('en-US')}` : `-${item.amount.toLocaleString('en-US')}`} ريال
+                </span>
+              </td>
+
+              {/* Tags */}
+              <td className="px-6 py-4">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {item.tags && item.tags.length > 0 ? (
+                    item.tags.map((tag, idx) => (
+                      <span key={idx} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-200">
+                        #{tag}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-slate-300 text-[11px]">-</span>
+                  )}
+                </div>
+              </td>
+
+              {/* Actions */}
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => openEditModal(item)}
+                    title="تعديل العملية"
+                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(item.id!)}
+                    title="حذف العملية"
+                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
       </TableView>
 
       {/* Add / Edit Transaction Modal */}

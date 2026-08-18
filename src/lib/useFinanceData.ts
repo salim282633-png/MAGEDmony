@@ -33,8 +33,16 @@ import {
   InvestmentItem,
   SubscriptionBill,
   FinancialEvent,
-  MonthlyClosure
+  MonthlyClosure,
+  SalaryDistributionRecord,
+  getPrimaryBankAccount
 } from '../types';
+import {
+  PRIMARY_BANK_NAME,
+  CURRENT_BANK_MIGRATION_VERSION,
+  isBankAccount,
+  executeBankMigrationTransactional
+} from './bankMigration';
 
 export enum OperationType {
   CREATE = 'create',
@@ -88,6 +96,7 @@ export function useFinanceData() {
   const [subscriptions, setSubscriptions] = useState<SubscriptionBill[]>([]);
   const [financialEvents, setFinancialEvents] = useState<FinancialEvent[]>([]);
   const [monthlyClosures, setMonthlyClosures] = useState<MonthlyClosure[]>([]);
+  const [salaryDistributions, setSalaryDistributions] = useState<SalaryDistributionRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -110,6 +119,10 @@ export function useFinanceData() {
       if (settingsDoc.exists()) {
         const data = settingsDoc.data() as UserSettings;
         setSettings(data);
+        // Automatic idempotent migration check: migrate all bank accounts to "بنك الشامل"
+        if ((data.bankAccountMigrationVersion || 0) < CURRENT_BANK_MIGRATION_VERSION) {
+          executeBankMigrationTransactional(db, userId).catch(console.error);
+        }
       } else {
         // First-time onboarding for this user
         const initialSettings: UserSettings = {
@@ -117,17 +130,18 @@ export function useFinanceData() {
           salary: 2500,
           currency: 'ريال سعودي',
           initialized: true,
-          onboardingCompleted: true
+          onboardingCompleted: true,
+          bankAccountMigrationVersion: CURRENT_BANK_MIGRATION_VERSION
         };
         await setDoc(doc(db, 'settings', userId), initialSettings).catch(console.error);
 
-        // Seed initial default accounts once
+        // Seed initial default accounts once with "بنك الشامل" as the single primary bank
         const defaultAccounts: Omit<AccountItem, 'id'>[] = [
-          { userId, name: 'الحساب البنكي الرئيسي', type: 'الحساب البنكي', balance: 1150, currency: 'ريال سعودي', isArchived: false, notes: 'حساب تحويل الراتب الرئيسي ومخصص المعيشة' },
-          { userId, name: 'صندوق سداد الديون', type: 'صندوق مخصص', balance: 650, currency: 'ريال سعودي', isArchived: false, notes: 'مخصص سداد الديون (26%)' },
-          { userId, name: 'صندوق الطوارئ', type: 'صندوق مخصص', balance: 400, currency: 'ريال سعودي', isArchived: false, notes: 'مخصص الطوارئ (16%)' },
-          { userId, name: 'صندوق الادخار والاستثمار', type: 'صندوق مخصص', balance: 300, currency: 'ريال سعودي', isArchived: false, notes: 'مخصص الادخار والاستثمار (12%)' },
-          { userId, name: 'المحفظة النقدية', type: 'نقد', balance: 0, currency: 'ريال سعودي', isArchived: false, notes: 'كاش للمصاريف اليومية' }
+          { userId, name: PRIMARY_BANK_NAME, type: 'الحساب البنكي', balance: 1150, currency: 'ريال سعودي', isArchived: false, isPrimaryBank: true, role: 'primary_bank', notes: 'الحساب البنكي الرئيسي والوحيد لتحويل الراتب ومخصص المعيشة' },
+          { userId, name: 'صندوق سداد الديون', type: 'صندوق مخصص', balance: 650, currency: 'ريال سعودي', isArchived: false, role: 'dedicated_fund', notes: 'مخصص سداد الديون (26%)' },
+          { userId, name: 'صندوق الطوارئ', type: 'صندوق مخصص', balance: 400, currency: 'ريال سعودي', isArchived: false, role: 'dedicated_fund', notes: 'مخصص الطوارئ (16%)' },
+          { userId, name: 'صندوق الادخار والاستثمار', type: 'صندوق مخصص', balance: 300, currency: 'ريال سعودي', isArchived: false, role: 'dedicated_fund', notes: 'مخصص الادخار والاستثمار (12%)' },
+          { userId, name: 'المحفظة النقدية', type: 'نقد', balance: 0, currency: 'ريال سعودي', isArchived: false, role: 'wallet', notes: 'كاش للمصاريف اليومية' }
         ];
         for (const acc of defaultAccounts) {
           await addDoc(collection(db, 'accounts'), acc).catch(console.error);
@@ -206,6 +220,11 @@ export function useFinanceData() {
       setMonthlyClosures(snap.docs.map(d => ({ id: d.id, ...d.data() } as MonthlyClosure)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'monthly_closures'));
 
+    // 14. Salary Distributions (Idempotency and distribution history)
+    const unsubSalaryDistributions = onSnapshot(query(collection(db, 'salary_distributions'), where('userId', '==', userId)), (snap) => {
+      setSalaryDistributions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SalaryDistributionRecord)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'salary_distributions'));
+
     setLoading(false);
 
     return () => {
@@ -222,18 +241,31 @@ export function useFinanceData() {
       unsubSubscriptions();
       unsubEvents();
       unsubMonthlyClosures();
+      unsubSalaryDistributions();
     };
   }, [user]);
 
-  // Helper to find matching account
-  const findAccountByMethod = (method?: string) => {
-    if (!method || method === 'الحساب البنكي' || method === 'الحساب البنكي الرئيسي') {
-      return accounts.find(a => a.name.includes('الرئيسي') || a.name.includes('المصاريف') || a.type === 'الحساب البنكي');
+  // Helper to find matching account with strict primary bank fallback
+  const findAccountByMethod = (method?: string, accountId?: string) => {
+    if (accountId) {
+      const byId = accounts.find(a => a.id === accountId);
+      if (byId) return byId;
+    }
+    if (
+      !method || 
+      method === 'الحساب البنكي' || 
+      method === 'الحساب البنكي الرئيسي' || 
+      method === PRIMARY_BANK_NAME ||
+      method.includes('بنك') ||
+      method.includes('البنك')
+    ) {
+      const primary = getPrimaryBankAccount(accounts);
+      if (primary) return primary;
     }
     return accounts.find(a => 
       a.name === method || 
       a.name.includes(method) || 
-      method.includes(a.name)
+      (method && method.includes(a.name))
     );
   };
 
@@ -248,7 +280,7 @@ export function useFinanceData() {
     if (!user) return;
     try {
       const refId = expense.referenceId || generateReferenceId(expense.type === 'دخل' ? 'inc' : 'exp');
-      const targetAcc = findAccountByMethod(expense.paymentMethod);
+      const targetAcc = findAccountByMethod(expense.paymentMethod, expense.accountId);
       const accRef = targetAcc?.id ? doc(db, 'accounts', targetAcc.id) : null;
       const newExpenseRef = doc(collection(db, 'expenses'));
 
@@ -268,6 +300,8 @@ export function useFinanceData() {
         tx.set(newExpenseRef, {
           ...expense,
           userId: user.uid,
+          accountId: targetAcc?.id || expense.accountId,
+          paymentMethod: targetAcc?.name || expense.paymentMethod,
           referenceId: refId
         });
 
@@ -296,7 +330,7 @@ export function useFinanceData() {
         if (!expenseSnap.exists()) return;
 
         const expenseData = expenseSnap.data() as Expense;
-        const targetAcc = findAccountByMethod(expenseData.paymentMethod);
+        const targetAcc = findAccountByMethod(expenseData.paymentMethod, expenseData.accountId);
         const accRef = targetAcc?.id ? doc(db, 'accounts', targetAcc.id) : null;
 
         let currentBalance = 0;
@@ -341,8 +375,8 @@ export function useFinanceData() {
         const oldMethod = oldData.paymentMethod;
         const newMethod = updatedData.paymentMethod || oldMethod;
 
-        const oldAcc = findAccountByMethod(oldMethod);
-        const newAcc = findAccountByMethod(newMethod);
+        const oldAcc = findAccountByMethod(oldMethod, oldData.accountId);
+        const newAcc = findAccountByMethod(newMethod, updatedData.accountId);
 
         // Reads
         let oldAccBalance = 0;
@@ -381,7 +415,11 @@ export function useFinanceData() {
           }
         }
 
-        tx.update(expenseRef, { ...updatedData });
+        tx.update(expenseRef, { 
+          ...updatedData,
+          accountId: newAcc?.id || updatedData.accountId,
+          paymentMethod: newAcc?.name || updatedData.paymentMethod || oldMethod
+        });
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'expenses');
@@ -1427,6 +1465,13 @@ export function useFinanceData() {
   const addAccountItem = async (acc: Omit<AccountItem, 'id' | 'userId'>) => {
     if (!user) return;
     try {
+      // Guard: Enforce single primary bank account
+      if (isBankAccount(acc)) {
+        const existingPrimary = getPrimaryBankAccount(accounts);
+        if (existingPrimary) {
+          throw new Error(`يمنع إنشاء حساب بنكي إضافي. «${PRIMARY_BANK_NAME}» هو الحساب البنكي الرئيسي والوحيد في النظام.`);
+        }
+      }
       await addDoc(collection(db, 'accounts'), { ...acc, userId: user.uid });
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, 'accounts');
@@ -1518,6 +1563,7 @@ export function useFinanceData() {
     subscriptions,
     financialEvents,
     monthlyClosures,
+    salaryDistributions,
     loading,
 
     // Actions
